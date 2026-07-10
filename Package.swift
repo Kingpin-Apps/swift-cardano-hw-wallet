@@ -36,7 +36,10 @@ let package = Package(
         ),
         .testTarget(
             name: "CardanoHWKitTests",
-            dependencies: ["CardanoHWKit"]
+            dependencies: [
+                "CardanoHWKit",
+                .product(name: "SwiftCardanoCore", package: "swift-cardano-core"),
+            ]
         ),
     ],
     swiftLanguageModes: [.v6]
