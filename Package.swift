@@ -18,6 +18,8 @@ let package = Package(
     products: [
         .library(name: "CardanoHWKit", targets: ["CardanoHWKit"]),
         .library(name: "CardanoHWWalletKeystone", targets: ["CardanoHWWalletKeystone"]),
+        .library(name: "CardanoHWWalletLedger", targets: ["CardanoHWWalletLedger"]),
+        .library(name: "CardanoHWWalletTrezor", targets: ["CardanoHWWalletTrezor"]),
     ],
     dependencies: [
         // Pinned to the same lines MansAmana resolves, so a single version of each package resolves
@@ -33,6 +35,13 @@ let package = Package(
         // same name Apple's swift-collections added in 1.2. Two same-named targets in one graph is a
         // hard SPM error, so hold swift-collections on the 1.1.x line (no `SortedCollections` target).
         .package(url: "https://github.com/apple/swift-collections.git", "1.1.0" ..< "1.2.0"),
+        // Ledger's official BLE transport (from Ledger Live). Zero transitive SPM deps, iOS 13 /
+        // macOS 12. Its `exchange(apdu:)` owns the `0x05`-tag BLE chunking, so the Ledger module only
+        // builds APDUs. Powers `BleLedgerTransport` (iOS + macOS).
+        .package(url: "https://github.com/LedgerHQ/hw-transport-ios-ble.git", from: "1.0.0"),
+        // Trezor speaks protobuf; there is no vendor Swift SDK, so we generate + commit the Cardano
+        // message types and serialize them with SwiftProtobuf.
+        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.28.0"),
     ],
     targets: [
         .target(
@@ -64,6 +73,36 @@ let package = Package(
             name: "CardanoHWWalletKeystoneTests",
             dependencies: [
                 "CardanoHWWalletKeystone",
+                .product(name: "SwiftCardanoCore", package: "swift-cardano-core"),
+            ]
+        ),
+        .target(
+            name: "CardanoHWWalletLedger",
+            dependencies: [
+                "CardanoHWKit",
+                // BleTransport is available on iOS + macOS; the USB (`HidLedgerTransport`) path is
+                // `#if os(macOS)`-guarded inside the source.
+                .product(name: "BleTransport", package: "hw-transport-ios-ble"),
+            ]
+        ),
+        .target(
+            name: "CardanoHWWalletTrezor",
+            dependencies: [
+                "CardanoHWKit",
+                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
+            ]
+        ),
+        .testTarget(
+            name: "CardanoHWWalletLedgerTests",
+            dependencies: [
+                "CardanoHWWalletLedger",
+                .product(name: "SwiftCardanoCore", package: "swift-cardano-core"),
+            ]
+        ),
+        .testTarget(
+            name: "CardanoHWWalletTrezorTests",
+            dependencies: [
+                "CardanoHWWalletTrezor",
                 .product(name: "SwiftCardanoCore", package: "swift-cardano-core"),
             ]
         ),
