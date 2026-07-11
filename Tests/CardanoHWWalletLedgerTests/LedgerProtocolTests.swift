@@ -169,6 +169,25 @@ struct LedgerProtocolTests {
         }
     }
 
+    // MARK: - Native assets
+
+    @Test("A multi-asset output serializes its token bundle (policy + name + count)")
+    func multiAssetOutput() throws {
+        let policyHex = String(repeating: "9a", count: 28)
+        let nameHex = "74657374"   // "test"
+        let multiAsset = try MultiAsset(from: [policyHex: [nameHex: Int64(7)]])
+        let recipient = try Address.fromBech32("addr_test1qq8ac7qqy0vtulyl7wntmsxc6wex80gvcyjy33qffrhm7sh927ysx5sftuw0dlft05dz3c7revpf7jx0xnlcjz3g69mqkt5dmn")
+        let output = TransactionOutput(address: recipient, amount: Value(coin: 2_000_000, multiAsset: multiAsset))
+        let input = TransactionInput(transactionId: TransactionId(payload: Data(repeating: 0x77, count: 32)), index: 0)
+        let body = TransactionBody(inputs: .list([input]), outputs: [output], fee: 200_000)
+        let tx = Transaction(transactionBody: body, transactionWitnessSet: TransactionWitnessSet())
+
+        let raw = try LedgerCardanoSerializer.serializeTransactionRaw(tx)
+        // The 28-byte policy id and the asset name bytes must appear in the token bundle.
+        #expect(raw.range(of: Data(ledgerHex: policyHex)!) != nil)
+        #expect(raw.range(of: Data(ledgerHex: nameHex)!) != nil)
+    }
+
     // MARK: - Staking (certificate)
 
     @Test("Stake delegation adds a cert to the stream + a stake-key witness")
