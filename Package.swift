@@ -17,6 +17,7 @@ let package = Package(
     ],
     products: [
         .library(name: "CardanoHWKit", targets: ["CardanoHWKit"]),
+        .library(name: "CardanoHWWalletKeystone", targets: ["CardanoHWWalletKeystone"]),
     ],
     dependencies: [
         // Pinned to the same lines MansAmana resolves, so a single version of each package resolves
@@ -24,6 +25,14 @@ let package = Package(
         .package(url: "https://github.com/Kingpin-Apps/swift-cardano-core.git", from: "0.5.0"),
         .package(url: "https://github.com/Kingpin-Apps/swift-cardano-chain.git", from: "0.7.1"),
         .package(url: "https://github.com/Kingpin-Apps/swift-cardano-txbuilder.git", from: "1.0.3"),
+        // Keystone's official iOS SDK: Cardano UR sign-request / signature types + URKit + the
+        // URRegistryFFI binary target. Powers the air-gapped QR flow.
+        .package(url: "https://github.com/KeystoneHQ/keystone-sdk-ios.git", from: "0.8.0"),
+        // Dependency-graph pin: Keystone → URKit → BCSwiftDCBOR depends on wolfmcnally's
+        // `SwiftSortedCollections`, which vends a target literally named `SortedCollections` — the
+        // same name Apple's swift-collections added in 1.2. Two same-named targets in one graph is a
+        // hard SPM error, so hold swift-collections on the 1.1.x line (no `SortedCollections` target).
+        .package(url: "https://github.com/apple/swift-collections.git", "1.1.0" ..< "1.2.0"),
     ],
     targets: [
         .target(
@@ -34,10 +43,27 @@ let package = Package(
                 .product(name: "SwiftCardanoTxBuilder", package: "swift-cardano-txbuilder"),
             ]
         ),
+        .target(
+            name: "CardanoHWWalletKeystone",
+            dependencies: [
+                "CardanoHWKit",
+                // Keystone's `URRegistryFFI` XCFramework ships **iOS-only** slices (no macOS), so the
+                // Keystone transport is iOS-only. Link the SDK on iOS only; the module's sources are
+                // `#if canImport(KeystoneSDK)`-guarded and compile to an empty module elsewhere.
+                .product(name: "KeystoneSDK", package: "keystone-sdk-ios", condition: .when(platforms: [.iOS])),
+            ]
+        ),
         .testTarget(
             name: "CardanoHWKitTests",
             dependencies: [
                 "CardanoHWKit",
+                .product(name: "SwiftCardanoCore", package: "swift-cardano-core"),
+            ]
+        ),
+        .testTarget(
+            name: "CardanoHWWalletKeystoneTests",
+            dependencies: [
+                "CardanoHWWalletKeystone",
                 .product(name: "SwiftCardanoCore", package: "swift-cardano-core"),
             ]
         ),

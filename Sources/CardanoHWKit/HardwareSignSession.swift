@@ -17,8 +17,9 @@ public enum SignIngestResult: Sendable, Equatable {
 /// - **Ledger/Trezor (BLE/USB, later):** the same seam wraps a byte stream — `nextFrame`/`ingest`
 ///   become send/receive over the transport.
 ///
-/// Class-bound and stateful; concrete implementations own non-`Sendable` codec objects and confine
-/// them to a single actor / the main actor.
+/// `@MainActor` and class-bound: concrete implementations own non-`Sendable` codec objects (UR
+/// encoders/decoders) and the app drives the loop from the main actor (SwiftUI camera + QR display).
+@MainActor
 public protocol HardwareSignSession: AnyObject {
     /// The device this session talks to.
     var deviceKind: HardwareDeviceKind { get }
