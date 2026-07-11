@@ -1,5 +1,6 @@
 import Foundation
 import SwiftCardanoCore
+import CardanoHWKit
 
 /// Trezor wire message-type ids (`messages.proto` `MessageType_*`), used in the v1 framing header.
 public enum TrezorMessageType {
@@ -17,6 +18,8 @@ public enum TrezorMessageType {
     public static let cardanoTxOutput: UInt16 = 322
     public static let cardanoAssetGroup: UInt16 = 323
     public static let cardanoToken: UInt16 = 324
+    public static let cardanoTxCertificate: UInt16 = 325
+    public static let cardanoTxWithdrawal: UInt16 = 326
 }
 
 /// Cardano key-derivation scheme the device uses (`CardanoDerivationType`). Import and signing must
@@ -70,8 +73,8 @@ public enum TrezorCardanoSerializer {
         func present(_ name: String, _ isThere: Bool) throws {
             if isThere { throw TrezorError.malformedResponse("Hardware signing does not yet support \(name).") }
         }
-        try present("certificates", (body.certificates?.count ?? 0) > 0)
-        try present("withdrawals", body.withdrawals != nil)
+        // Certificates + withdrawals ARE supported (emitted from the request's device-neutral
+        // descriptions), so `body.certificates` isn't inspected here.
         try present("minting", body.mint != nil)
         try present("collateral", (body.collateral?.count ?? 0) > 0)
         try present("required signers", (body.requiredSigners?.count ?? 0) > 0)
@@ -89,7 +92,9 @@ public enum TrezorCardanoSerializer {
         _ tx: Transaction,
         witnessCount: Int,
         network: TrezorNetwork,
-        options: TrezorSigningOptions
+        options: TrezorSigningOptions,
+        certificateCount: Int = 0,
+        withdrawalCount: Int = 0
     ) throws -> TrezorMessage {
         let body = tx.transactionBody
         try assertInScope(body)
@@ -102,8 +107,8 @@ public enum TrezorCardanoSerializer {
         w.varint(5, UInt64(body.outputs.count))                // outputs_count
         w.varint(6, UInt64(body.fee))                          // fee
         if let ttl = body.ttl { w.varint(7, UInt64(ttl)) }     // ttl
-        w.varint(8, 0)                                         // certificates_count
-        w.varint(9, 0)                                         // withdrawals_count
+        w.varint(8, UInt64(certificateCount))                  // certificates_count
+        w.varint(9, UInt64(withdrawalCount))                   // withdrawals_count
         w.bool(10, false)                                      // has_auxiliary_data
         if let vis = body.validityStart { w.varint(11, UInt64(vis)) }  // validity_interval_start
         w.varint(12, UInt64(witnessCount))                     // witness_requests_count
@@ -118,9 +123,13 @@ public enum TrezorCardanoSerializer {
         return TrezorMessage(type: TrezorMessageType.cardanoSignTxInit, payload: w.data)
     }
 
-    /// The ordered body-item messages: each input, then each output followed by its asset groups and
-    /// tokens (the exact order the device consumes them).
-    public static func bodyItemMessages(_ tx: Transaction) throws -> [TrezorMessage] {
+    /// The ordered body-item messages: each input, then each output (+ its asset groups and tokens),
+    /// then each certificate, then each withdrawal — the exact order the device consumes them.
+    public static func bodyItemMessages(
+        _ tx: Transaction,
+        certificates: [HardwareCertificate] = [],
+        withdrawals: [HardwareWithdrawal] = []
+    ) throws -> [TrezorMessage] {
         let body = tx.transactionBody
         try assertInScope(body)
         var messages: [TrezorMessage] = []
@@ -154,7 +163,58 @@ public enum TrezorCardanoSerializer {
                 }
             }
         }
+
+        for certificate in certificates {
+            messages.append(try certificateMessage(certificate))
+        }
+        for withdrawal in withdrawals {
+            var w = ProtobufWriter()
+            w.repeatedUInt32(1, try TrezorBIP32Path.parse(withdrawal.stakePath))   // path
+            w.varint(2, withdrawal.amount)                                          // amount
+            messages.append(TrezorMessage(type: TrezorMessageType.cardanoTxWithdrawal, payload: w.data))
+        }
         return messages
+    }
+
+    private static func certificateMessage(_ certificate: HardwareCertificate) throws -> TrezorMessage {
+        var w = ProtobufWriter()
+        switch certificate {
+        case .stakeDelegation(let stakePath, let poolKeyHashHex):
+            w.varint(1, 2)                                                   // type STAKE_DELEGATION
+            w.repeatedUInt32(2, try TrezorBIP32Path.parse(stakePath))        // path
+            w.bytes(3, try hex(poolKeyHashHex, "pool key hash"))             // pool
+        case .stakeRegistrationConway(let stakePath, let deposit):
+            w.varint(1, 7)                                                   // STAKE_REGISTRATION_CONWAY
+            w.repeatedUInt32(2, try TrezorBIP32Path.parse(stakePath))
+            w.varint(7, deposit)                                             // deposit
+        case .stakeDeregistrationConway(let stakePath, let deposit):
+            w.varint(1, 8)                                                   // STAKE_DEREGISTRATION_CONWAY
+            w.repeatedUInt32(2, try TrezorBIP32Path.parse(stakePath))
+            w.varint(7, deposit)
+        case .voteDelegation(let stakePath, let drep):
+            w.varint(1, 9)                                                   // VOTE_DELEGATION
+            w.repeatedUInt32(2, try TrezorBIP32Path.parse(stakePath))
+            w.bytes(8, try drepMessage(drep))                               // drep (embedded)
+        }
+        return TrezorMessage(type: TrezorMessageType.cardanoTxCertificate, payload: w.data)
+    }
+
+    private static func drepMessage(_ drep: HardwareDRepKind) throws -> Data {
+        var w = ProtobufWriter()
+        switch drep {
+        case .keyHash(let h): w.varint(1, 0); w.bytes(2, try hex(h, "DRep key hash"))
+        case .scriptHash(let h): w.varint(1, 1); w.bytes(3, try hex(h, "DRep script hash"))
+        case .abstain: w.varint(1, 2)
+        case .noConfidence: w.varint(1, 3)
+        }
+        return w.data
+    }
+
+    private static func hex(_ string: String, _ label: String) throws -> Data {
+        guard let data = Data(hexString: string) else {
+            throw TrezorError.malformedResponse("Invalid \(label) hex: \(string)")
+        }
+        return data
     }
 
     /// A `CardanoTxWitnessRequest` for a BIP32 path (`repeated uint32 path`).

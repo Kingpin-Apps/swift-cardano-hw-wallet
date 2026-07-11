@@ -42,12 +42,16 @@ public actor TrezorSignSession: HardwareSigner {
 
         // Init → ItemAck.
         let initMessage = try TrezorCardanoSerializer.initMessage(
-            request.unsigned, witnessCount: witnessPaths.count, network: network, options: options
+            request.unsigned, witnessCount: witnessPaths.count, network: network, options: options,
+            certificateCount: request.certificates.count, withdrawalCount: request.withdrawals.count
         )
         try expect(try await exchange(initMessage).type, TrezorMessageType.cardanoTxItemAck)
 
         // Each body item → ItemAck.
-        for item in try TrezorCardanoSerializer.bodyItemMessages(request.unsigned) {
+        let bodyItems = try TrezorCardanoSerializer.bodyItemMessages(
+            request.unsigned, certificates: request.certificates, withdrawals: request.withdrawals
+        )
+        for item in bodyItems {
             try expect(try await exchange(item).type, TrezorMessageType.cardanoTxItemAck)
         }
 
@@ -104,6 +108,11 @@ public actor TrezorSignSession: HardwareSigner {
     private func witnessPaths(for request: HardwareSignRequest) throws -> [[UInt32]] {
         var seen = Set<String>()
         var paths: [[UInt32]] = []
+        func add(_ pathString: String) throws {
+            if seen.insert(pathString).inserted {
+                paths.append(try TrezorBIP32Path.parse(pathString))
+            }
+        }
         for utxo in request.spentUTxOs {
             let address: String
             do { address = try utxo.output.address.toBech32() }
@@ -111,11 +120,11 @@ public actor TrezorSignSession: HardwareSigner {
             guard let pathString = request.addressPaths[address] else {
                 throw TrezorError.malformedResponse("No derivation path for input address \(address).")
             }
-            if seen.insert(pathString).inserted {
-                paths.append(try TrezorBIP32Path.parse(pathString))
-            }
+            try add(pathString)
         }
-        guard !paths.isEmpty else { throw TrezorError.malformedResponse("Sign request has no inputs to witness.") }
+        for certificate in request.certificates { try add(certificate.stakePath) }
+        for withdrawal in request.withdrawals { try add(withdrawal.stakePath) }
+        guard !paths.isEmpty else { throw TrezorError.malformedResponse("Sign request has no keys to witness.") }
         return paths
     }
 

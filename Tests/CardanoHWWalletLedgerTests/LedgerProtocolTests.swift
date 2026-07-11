@@ -169,6 +169,62 @@ struct LedgerProtocolTests {
         }
     }
 
+    // MARK: - Staking (certificate)
+
+    @Test("Stake delegation adds a cert to the stream + a stake-key witness")
+    func delegationSign() async throws {
+        let (engine, root) = try wallet()
+        let spendAddr = try engine.address(role: 0, index: 0)
+        let tx = try Self.simpleTx(spendAddress: spendAddr, txidByte: 0x55, fee: 180_000, ttl: nil)
+        let bodyHash = tx.transactionBody.hash()
+
+        let stakePath = "\(accountPath)/2/0"
+        let poolHashHex = String(repeating: "ab", count: 28)
+        let cert = HardwareCertificate.stakeDelegation(stakePath: stakePath, poolKeyHashHex: poolHashHex)
+
+        // INIT declares certificates_count = 1.
+        let paymentPath = try LedgerBIP32Path("\(accountPath)/0/0")
+        let raw = try LedgerCardanoSerializer.serializeTransactionRaw(tx, certificates: [cert])
+        let initData = try LedgerCardanoSerializer.serializeTxInitData(
+            tx, witnessPaths: [paymentPath], rawTxLength: raw.count, network: .preprod, options: .init(),
+            certificateCount: 1, withdrawalCount: 0
+        )
+        #expect(Array(initData)[19...20] == [0, 1])   // certificates count
+
+        // Device signs the body hash with both the payment key (input) and the stake key (cert).
+        let paymentLeaf = try root.derive(fromPath: "\(accountPath)/0/0")
+        let stakeLeaf = try root.derive(fromPath: stakePath)
+        let paySig = try BIP32ED25519PrivateKey(privateKey: Data(paymentLeaf.xPrivateKey), chainCode: Data(paymentLeaf.chainCode)).sign(message: bodyHash)
+        let stakeSig = try BIP32ED25519PrivateKey(privateKey: Data(stakeLeaf.xPrivateKey), chainCode: Data(stakeLeaf.chainCode)).sign(message: bodyHash)
+
+        let input = TransactionInput(transactionId: TransactionId(payload: Data(repeating: 0x55, count: 32)), index: 0)
+        let spentUTxO = UTxO(input: input, output: TransactionOutput(address: try Address.fromBech32(spendAddr), amount: Value(coin: 5_000_000)))
+        let request = HardwareSignRequest(
+            requestId: "deleg", unsigned: tx, spentUTxOs: [spentUTxO],
+            addressPaths: [spendAddr: "\(accountPath)/0/0"],
+            masterFingerprint: Data(repeating: 0, count: 4), origin: "t",
+            certificates: [cert]
+        )
+        // INIT → CONFIRM(tx hash) → payment witness → stake witness.
+        let transport = MockLedgerTransport(responses: [Data(), bodyHash, paySig, stakeSig])
+        let session = LedgerSignSession(transport: transport, network: .preprod, derivation: engine)
+
+        let witnessSetHex = try await session.sign(request)
+        let witnesses = (try TransactionWitnessSet.fromCBORHex(witnessSetHex)).vkeyWitnesses?.asList ?? []
+        #expect(witnesses.count == 2)   // payment + stake
+
+        // The stake witness carries the derived stake pubkey and verifies.
+        let stakePub = try engine.stakeVerificationKey(index: 0).payload
+        #expect(witnesses.contains { $0.signature == stakeSig })
+        let verifier = BIP32ED25519PublicKey(publicKey: stakePub, chainCode: Data(stakeLeaf.chainCode))
+        #expect(throws: Never.self) { _ = try verifier.verify(signature: stakeSig, message: bodyHash) }
+
+        // Four APDUs: INIT, CONFIRM chunk, 2 witness requests.
+        let sent = await transport.recordedAPDUs()
+        #expect(sent.count == 4)
+        #expect(Array(sent[2])[2] == 0x0f && Array(sent[3])[2] == 0x0f)   // both witness requests
+    }
+
     // MARK: - Fixtures
 
     /// A single-input, single-output plain-ADA transaction paying a fixed recipient.

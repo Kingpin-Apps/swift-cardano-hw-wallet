@@ -32,12 +32,17 @@ public enum UnsignedTxBuilder {
         changeAddress: Address,
         signerCount: Int = 1,
         ttl: SlotNumber? = nil,
-        auxiliaryData: AuxiliaryData? = nil
+        auxiliaryData: AuxiliaryData? = nil,
+        certificates: [Certificate]? = nil,
+        withdrawals: Withdrawals? = nil
     ) async throws -> UnsignedBuildResult {
         guard !candidateUTxOs.isEmpty else {
             throw HardwareWalletError.buildFailed("The account has no UTxOs to spend.")
         }
-        guard !outputs.isEmpty else {
+        // A staking-only transaction (certificate / withdrawal) can have no explicit outputs — change
+        // covers the balance. Outputs are only required when there are no certs/withdrawals.
+        let hasStakeActions = (certificates?.isEmpty == false) || (withdrawals != nil)
+        guard !outputs.isEmpty || hasStakeActions else {
             throw HardwareWalletError.invalidRequest("A transaction needs at least one output.")
         }
 
@@ -51,6 +56,8 @@ public enum UnsignedTxBuilder {
         }
         if let ttl { builder.ttl = ttl }
         builder.auxiliaryData = auxiliaryData
+        builder.certificates = certificates
+        builder.withdrawals = withdrawals
 
         let body: TransactionBody
         do {

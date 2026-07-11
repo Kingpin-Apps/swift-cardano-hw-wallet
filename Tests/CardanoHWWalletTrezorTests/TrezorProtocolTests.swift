@@ -170,6 +170,62 @@ struct TrezorProtocolTests {
         }
     }
 
+    // MARK: - Governance (vote delegation certificate)
+
+    @Test("Vote delegation streams a certificate + a stake-key witness")
+    func voteDelegationSign() async throws {
+        let (engine, root) = try wallet()
+        let spendAddr = try engine.address(role: 0, index: 0)
+        let tx = try Self.simpleTx(spendAddress: spendAddr, txidByte: 0x66, fee: 180_000, ttl: nil)
+        let bodyHash = tx.transactionBody.hash()
+
+        let stakePath = "\(accountPath)/2/0"
+        let drepHashHex = String(repeating: "cd", count: 28)
+        let cert = HardwareCertificate.voteDelegation(stakePath: stakePath, drep: .keyHash(drepHashHex))
+
+        // The cert produces one CardanoTxCertificate (325) body item.
+        let items = try TrezorCardanoSerializer.bodyItemMessages(tx, certificates: [cert])
+        #expect(items.contains { $0.type == 325 })
+
+        let paymentLeaf = try root.derive(fromPath: "\(accountPath)/0/0")
+        let stakeLeaf = try root.derive(fromPath: stakePath)
+        let payPub = Data(paymentLeaf.publicKey)
+        let stakePub = Data(stakeLeaf.publicKey)
+        let paySig = try BIP32ED25519PrivateKey(privateKey: Data(paymentLeaf.xPrivateKey), chainCode: Data(paymentLeaf.chainCode)).sign(message: bodyHash)
+        let stakeSig = try BIP32ED25519PrivateKey(privateKey: Data(stakeLeaf.xPrivateKey), chainCode: Data(stakeLeaf.chainCode)).sign(message: bodyHash)
+
+        func witnessResponse(pub: Data, sig: Data) -> Data {
+            var w = ProtobufWriter(); w.varint(1, 1); w.bytes(2, pub); w.bytes(3, sig); return w.data
+        }
+        var inbound: [Data] = []
+        func queue(_ type: UInt16, _ payload: Data) { inbound.append(contentsOf: TrezorProtocolV1.encode(messageType: type, payload: payload)) }
+        queue(TrezorMessageType.cardanoTxItemAck, Data())   // init
+        queue(TrezorMessageType.cardanoTxItemAck, Data())   // input
+        queue(TrezorMessageType.cardanoTxItemAck, Data())   // output
+        queue(TrezorMessageType.cardanoTxItemAck, Data())   // certificate
+        queue(TrezorMessageType.cardanoTxWitnessResponse, witnessResponse(pub: payPub, sig: paySig))
+        queue(TrezorMessageType.cardanoTxWitnessResponse, witnessResponse(pub: stakePub, sig: stakeSig))
+        var bh = ProtobufWriter(); bh.bytes(1, bodyHash)
+        queue(TrezorMessageType.cardanoTxBodyHash, bh.data)
+        queue(TrezorMessageType.cardanoSignTxFinished, Data())
+
+        let input = TransactionInput(transactionId: TransactionId(payload: Data(repeating: 0x66, count: 32)), index: 0)
+        let spentUTxO = UTxO(input: input, output: TransactionOutput(address: try Address.fromBech32(spendAddr), amount: Value(coin: 5_000_000)))
+        let request = HardwareSignRequest(
+            requestId: "vote", unsigned: tx, spentUTxOs: [spentUTxO],
+            addressPaths: [spendAddr: "\(accountPath)/0/0"],
+            masterFingerprint: Data(repeating: 0, count: 4), origin: "t",
+            certificates: [cert]
+        )
+        let session = TrezorSignSession(link: MockPacketLink(inbound: inbound), network: .preprod)
+        let witnessSetHex = try await session.sign(request)
+        let witnesses = (try TransactionWitnessSet.fromCBORHex(witnessSetHex)).vkeyWitnesses?.asList ?? []
+        #expect(witnesses.count == 2)
+        #expect(witnesses.contains { $0.signature == stakeSig })
+        let verifier = BIP32ED25519PublicKey(publicKey: stakePub, chainCode: Data(stakeLeaf.chainCode))
+        #expect(throws: Never.self) { _ = try verifier.verify(signature: stakeSig, message: bodyHash) }
+    }
+
     // MARK: - Fixtures
 
     private static func simpleTx(spendAddress: String, txidByte: UInt8, fee: UInt64, ttl: UInt64?) throws -> Transaction {

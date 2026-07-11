@@ -17,6 +17,10 @@ public struct HardwareSignRequest: Sendable {
     public let masterFingerprint: Data
     /// A short label for the requesting app (shown on the device), e.g. "MansAmana".
     public let origin: String
+    /// Staking / governance certificates in the transaction (device-neutral). Empty for a plain send.
+    public let certificates: [HardwareCertificate]
+    /// Rewards withdrawals in the transaction (device-neutral). Empty for a plain send.
+    public let withdrawals: [HardwareWithdrawal]
 
     public init(
         requestId: String,
@@ -24,7 +28,9 @@ public struct HardwareSignRequest: Sendable {
         spentUTxOs: [UTxO],
         addressPaths: [String: String],
         masterFingerprint: Data,
-        origin: String
+        origin: String,
+        certificates: [HardwareCertificate] = [],
+        withdrawals: [HardwareWithdrawal] = []
     ) {
         self.requestId = requestId
         self.unsigned = unsigned
@@ -32,6 +38,8 @@ public struct HardwareSignRequest: Sendable {
         self.addressPaths = addressPaths
         self.masterFingerprint = masterFingerprint
         self.origin = origin
+        self.certificates = certificates
+        self.withdrawals = withdrawals
     }
 
     /// The unsigned transaction as CBOR hex — the payload a device signs over.

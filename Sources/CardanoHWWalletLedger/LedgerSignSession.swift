@@ -45,7 +45,8 @@ public actor LedgerSignSession: HardwareSigner {
 
         let witnessPaths = try witnessPaths(for: request)
         let apdus = try LedgerCardanoSerializer.signTxAPDUs(
-            request.unsigned, witnessPaths: witnessPaths, network: network, options: options
+            request.unsigned, witnessPaths: witnessPaths, network: network, options: options,
+            certificates: request.certificates, withdrawals: request.withdrawals
         )
 
         // The final `witnessPaths.count` APDUs are the per-path witness requests; everything before is
@@ -83,10 +84,16 @@ public actor LedgerSignSession: HardwareSigner {
 
     // MARK: - Internals
 
-    /// Unique payment paths (in input order) for the spent UTxOs — one witness per distinct key.
+    /// Unique witness paths (in order): the payment paths for spent UTxOs, then the stake paths any
+    /// certificate / withdrawal is signed by — one witness per distinct key.
     private func witnessPaths(for request: HardwareSignRequest) throws -> [LedgerBIP32Path] {
         var seen = Set<String>()
         var paths: [LedgerBIP32Path] = []
+        func add(_ pathString: String) throws {
+            if seen.insert(pathString).inserted {
+                paths.append(try LedgerBIP32Path(pathString))
+            }
+        }
         for utxo in request.spentUTxOs {
             let address: String
             do { address = try utxo.output.address.toBech32() }
@@ -94,12 +101,12 @@ public actor LedgerSignSession: HardwareSigner {
             guard let pathString = request.addressPaths[address] else {
                 throw LedgerError.app("No derivation path for input address \(address).")
             }
-            if seen.insert(pathString).inserted {
-                paths.append(try LedgerBIP32Path(pathString))
-            }
+            try add(pathString)
         }
+        for certificate in request.certificates { try add(certificate.stakePath) }
+        for withdrawal in request.withdrawals { try add(withdrawal.stakePath) }
         guard !paths.isEmpty else {
-            throw LedgerError.app("Sign request has no spendable inputs to witness.")
+            throw LedgerError.app("Sign request has no keys to witness.")
         }
         return paths
     }

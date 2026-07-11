@@ -1,5 +1,6 @@
 import Foundation
 import SwiftCardanoCore
+import CardanoHWKit
 
 /// Ledger network parameters the device needs to render/validate a transaction.
 public struct LedgerNetwork: Sendable, Equatable {
@@ -40,18 +41,19 @@ public enum LedgerCardanoSerializer {
     private static let includedYes: UInt8 = 0x02
     private static let signingModeOrdinary: UInt8 = 3
     private static let destThirdParty: UInt8 = 1
+    private static let credentialKeyPath: UInt8 = 0   // Ledger CredentialType.KEY_PATH
 
     private static func included(_ flag: Bool) -> UInt8 { flag ? includedYes : includedNo }
 
     // MARK: - Scope guard
 
-    /// Throws if the transaction uses features outside the first-cut hardware scope.
+    /// Throws if the transaction uses features outside the current hardware scope. Certificates and
+    /// withdrawals ARE supported (staking + governance); they're emitted from the request's
+    /// device-neutral descriptions, so we don't inspect `body.certificates` here.
     static func assertInScope(_ body: TransactionBody) throws {
         func present(_ name: String, _ isThere: Bool) throws {
             if isThere { throw LedgerError.app("Hardware signing does not yet support \(name).") }
         }
-        try present("certificates", (body.certificates?.count ?? 0) > 0)
-        try present("withdrawals", body.withdrawals != nil)
         try present("minting", body.mint != nil)
         try present("collateral", (body.collateral?.count ?? 0) > 0)
         try present("required signers", (body.requiredSigners?.count ?? 0) > 0)
@@ -68,7 +70,11 @@ public enum LedgerCardanoSerializer {
     // MARK: - Raw serialization
 
     /// The flat wire form the device streams and hashes.
-    public static func serializeTransactionRaw(_ tx: Transaction) throws -> Data {
+    public static func serializeTransactionRaw(
+        _ tx: Transaction,
+        certificates: [HardwareCertificate] = [],
+        withdrawals: [HardwareWithdrawal] = []
+    ) throws -> Data {
         let body = tx.transactionBody
         try assertInScope(body)
         var out = Data()
@@ -89,12 +95,65 @@ public enum LedgerCardanoSerializer {
         if let ttl = body.ttl {
             out.append(contentsOf: LedgerBytes.uint64BE(UInt64(ttl)))
         }
-        // certificates / withdrawals: none (scope-guarded)
+        for certificate in certificates {
+            out.append(try serializeCertificate(certificate))
+        }
+        for withdrawal in withdrawals {
+            out.append(contentsOf: LedgerBytes.uint64BE(withdrawal.amount))
+            out.append(try serializeCredential(path: withdrawal.stakePath))
+        }
         if let validityStart = body.validityStart {
             out.append(contentsOf: LedgerBytes.uint64BE(UInt64(validityStart)))
         }
         // mint / scriptDataHash / collateral / … : none (scope-guarded)
         return out
+    }
+
+    // MARK: - Certificates
+
+    private static func serializeCredential(path: String) throws -> Data {
+        var out = Data([credentialKeyPath])
+        out.append(try LedgerBIP32Path(path).encoded())
+        return out
+    }
+
+    private static func serializeCertificate(_ certificate: HardwareCertificate) throws -> Data {
+        var out = Data()
+        switch certificate {
+        case .stakeDelegation(let stakePath, let poolKeyHashHex):
+            out.append(2)
+            out.append(try serializeCredential(path: stakePath))
+            out.append(try hex(poolKeyHashHex, "pool key hash"))
+        case .stakeRegistrationConway(let stakePath, let deposit):
+            out.append(7)
+            out.append(try serializeCredential(path: stakePath))
+            out.append(contentsOf: LedgerBytes.uint64BE(deposit))
+        case .stakeDeregistrationConway(let stakePath, let deposit):
+            out.append(8)
+            out.append(try serializeCredential(path: stakePath))
+            out.append(contentsOf: LedgerBytes.uint64BE(deposit))
+        case .voteDelegation(let stakePath, let drep):
+            out.append(9)
+            out.append(try serializeCredential(path: stakePath))
+            out.append(try serializeDRep(drep))
+        }
+        return out
+    }
+
+    private static func serializeDRep(_ drep: HardwareDRepKind) throws -> Data {
+        switch drep {
+        case .keyHash(let h): return Data([0]) + (try hex(h, "DRep key hash"))
+        case .scriptHash(let h): return Data([1]) + (try hex(h, "DRep script hash"))
+        case .abstain: return Data([2])
+        case .noConfidence: return Data([3])
+        }
+    }
+
+    private static func hex(_ string: String, _ label: String) throws -> Data {
+        guard let data = Data(ledgerHex: string) else {
+            throw LedgerError.app("Invalid \(label) hex: \(string)")
+        }
+        return data
     }
 
     private static func serializeOutput(_ output: TransactionOutput) throws -> Data {
@@ -152,7 +211,9 @@ public enum LedgerCardanoSerializer {
         witnessPaths: [LedgerBIP32Path],
         rawTxLength: Int,
         network: LedgerNetwork,
-        options: LedgerSigningOptions
+        options: LedgerSigningOptions,
+        certificateCount: Int = 0,
+        withdrawalCount: Int = 0
     ) throws -> Data {
         let body = tx.transactionBody
         try assertInScope(body)
@@ -166,8 +227,8 @@ public enum LedgerCardanoSerializer {
         out.append(contentsOf: LedgerBytes.uint16BE(UInt16(body.inputs.count)))
         out.append(contentsOf: LedgerBytes.uint16BE(UInt16(body.outputs.count)))
         out.append(included(body.ttl != nil))
-        out.append(contentsOf: LedgerBytes.uint16BE(0))     // certificates
-        out.append(contentsOf: LedgerBytes.uint16BE(0))     // withdrawals
+        out.append(contentsOf: LedgerBytes.uint16BE(UInt16(certificateCount)))
+        out.append(contentsOf: LedgerBytes.uint16BE(UInt16(withdrawalCount)))
         out.append(included(false))                          // auxiliary data
         out.append(included(body.validityStart != nil))
         out.append(contentsOf: LedgerBytes.uint16BE(0))     // mint
@@ -195,11 +256,14 @@ public enum LedgerCardanoSerializer {
         _ tx: Transaction,
         witnessPaths: [LedgerBIP32Path],
         network: LedgerNetwork,
-        options: LedgerSigningOptions
+        options: LedgerSigningOptions,
+        certificates: [HardwareCertificate] = [],
+        withdrawals: [HardwareWithdrawal] = []
     ) throws -> [Data] {
-        let rawTx = try serializeTransactionRaw(tx)
+        let rawTx = try serializeTransactionRaw(tx, certificates: certificates, withdrawals: withdrawals)
         let initData = try serializeTxInitData(
-            tx, witnessPaths: witnessPaths, rawTxLength: rawTx.count, network: network, options: options
+            tx, witnessPaths: witnessPaths, rawTxLength: rawTx.count, network: network, options: options,
+            certificateCount: certificates.count, withdrawalCount: withdrawals.count
         )
 
         var apdus: [Data] = [
