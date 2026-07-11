@@ -84,6 +84,23 @@ public struct LedgerBIP32Path: Sendable, Equatable {
     }
 }
 
+/// Ledger APDU status-word handling.
+public enum LedgerStatus {
+    public static let ok: UInt16 = 0x9000
+
+    /// Verify the trailing 2-byte status word of a raw APDU response is `0x9000` and return the
+    /// payload without it. Throws ``LedgerError/status(_:)`` on any other status.
+    public static func payload(_ response: Data) throws -> Data {
+        let bytes = Array(response)
+        guard bytes.count >= 2 else {
+            throw LedgerError.malformedResponse("Ledger response too short for a status word (\(bytes.count) bytes).")
+        }
+        let sw = UInt16(bytes[bytes.count - 2]) << 8 | UInt16(bytes[bytes.count - 1])
+        guard sw == ok else { throw LedgerError.status(sw) }
+        return Data(bytes.dropLast(2))
+    }
+}
+
 /// Big-endian integer serialization helpers (Ledger encodes everything big-endian).
 public enum LedgerBytes {
     public static func uint16BE(_ v: UInt16) -> [UInt8] { [UInt8(v >> 8), UInt8(v & 0xff)] }
