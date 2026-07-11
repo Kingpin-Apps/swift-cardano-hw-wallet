@@ -39,9 +39,6 @@ let package = Package(
         // macOS 12. Its `exchange(apdu:)` owns the `0x05`-tag BLE chunking, so the Ledger module only
         // builds APDUs. Powers `BleLedgerTransport` (iOS + macOS).
         .package(url: "https://github.com/LedgerHQ/hw-transport-ios-ble.git", from: "1.0.0"),
-        // Trezor speaks protobuf; there is no vendor Swift SDK, so we generate + commit the Cardano
-        // message types and serialize them with SwiftProtobuf.
-        .package(url: "https://github.com/apple/swift-protobuf.git", from: "1.28.0"),
     ],
     targets: [
         .target(
@@ -88,8 +85,9 @@ let package = Package(
         .target(
             name: "CardanoHWWalletTrezor",
             dependencies: [
+                // No SwiftProtobuf: the Trezor Cardano messages are encoded with a small self-contained
+                // proto2 wire codec (`TrezorProtobuf`), so there's no protoc/codegen toolchain.
                 "CardanoHWKit",
-                .product(name: "SwiftProtobuf", package: "swift-protobuf"),
             ]
         ),
         .testTarget(
