@@ -3,22 +3,27 @@ import SwiftCardanoCore
 import CardanoHWKit
 
 /// A ``HardwareSigner`` for Trezor devices. Speaks the Cardano protobuf dialogue over a
-/// ``HardwarePacketLink`` (USB-HID), framed by ``TrezorProtocolV1``. Trezor returns each witness's
-/// public key alongside its signature, so the witness set is assembled directly from device
+/// ``TrezorTransport`` — either the legacy Codec-v1 framing (``TrezorV1Transport`` over a
+/// ``HardwarePacketLink``) or the encrypted THP v2 channel (``TrezorTHPSession``). Trezor returns each
+/// witness's public key alongside its signature, so the witness set is assembled directly from device
 /// responses — no local key derivation, no private key.
-///
-/// Assumes the device is already in a ready state (the transport layer performs the
-/// Initialize/Features handshake). macOS-only in practice (USB), though the message logic is
-/// platform-neutral.
 public actor TrezorSignSession: HardwareSigner {
     public nonisolated let deviceKind = HardwareDeviceKind.trezor
 
-    private let link: HardwarePacketLink
+    private let transport: TrezorTransport
     private let network: TrezorNetwork
     private let options: TrezorSigningOptions
 
+    /// Run over a raw packet link with legacy Codec-v1 framing (pre-THP firmware).
     public init(link: HardwarePacketLink, network: TrezorNetwork, options: TrezorSigningOptions = .init()) {
-        self.link = link
+        self.transport = TrezorV1Transport(link: link)
+        self.network = network
+        self.options = options
+    }
+
+    /// Run over any transport — e.g. a ``TrezorTHPSession`` for the encrypted THP v2 channel.
+    public init(transport: TrezorTransport, network: TrezorNetwork, options: TrezorSigningOptions = .init()) {
+        self.transport = transport
         self.network = network
         self.options = options
     }
@@ -26,7 +31,7 @@ public actor TrezorSignSession: HardwareSigner {
     // MARK: - Import
 
     public func importAccount(network netId: NetworkId, accountIndex: Int) async throws -> HardwareAccountModel {
-        try await link.open()
+        try await transport.open()
         let request = try TrezorAccountImport.getPublicKeyMessage(accountIndex: accountIndex, derivationType: options.derivationType)
         let response = try await exchange(request)
         try expect(response.type, TrezorMessageType.cardanoPublicKey)
@@ -36,7 +41,7 @@ public actor TrezorSignSession: HardwareSigner {
     // MARK: - Sign
 
     public func sign(_ request: HardwareSignRequest) async throws -> String {
-        try await link.open()
+        try await transport.open()
 
         let witnessPaths = try witnessPaths(for: request)
 
@@ -81,22 +86,9 @@ public actor TrezorSignSession: HardwareSigner {
 
     // MARK: - Wire exchange
 
-    /// Send one protobuf message and read one response message, surfacing device `Failure`s.
+    /// Send one message and read one response over the configured transport (Codec-v1 or THP).
     private func exchange(_ message: TrezorMessage) async throws -> (type: UInt16, payload: Data) {
-        for report in TrezorProtocolV1.encode(messageType: message.type, payload: message.payload) {
-            try await link.write(report)
-        }
-        var decoder = TrezorProtocolV1.Decoder()
-        while true {
-            let report = try await link.read()
-            if let (type, payload) = try decoder.push(report) {
-                if type == TrezorMessageType.failure {
-                    let reader = try ProtobufReader(payload)
-                    throw TrezorError.failure(code: Int(reader.varint(1) ?? 0), message: reader.string(2) ?? "")
-                }
-                return (type, payload)
-            }
-        }
+        try await transport.exchange(message)
     }
 
     private func expect(_ got: UInt16, _ want: UInt16) throws {
