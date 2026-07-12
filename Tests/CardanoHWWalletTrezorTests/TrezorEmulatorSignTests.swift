@@ -92,7 +92,82 @@ struct TrezorEmulatorSignTests {
         print("EMU-SIGN-VECTOR witnessSet=\(witnessSetHex)")
     }
 
+    @Test("sign() a rewards withdrawal — device hash matches, payment + stake witnesses verify", .enabled(if: emulatorEnabled))
+    func liveWithdraw() async throws {
+        let bridge = TrezorEmulatorBridge()
+        let session = TrezorSignSession(transport: bridge, network: .mainnet, options: Self.options)
+        let (tx, request, derivation) = try await Self.stakingTx(session: session) { _, rewardAccount, base in
+            var body = base
+            body.withdrawals = Withdrawals([rewardAccount: Coin(1_500_000)])
+            return (body, [], [HardwareWithdrawal(stakePath: Self.stakePath, rewardAccountHex: rewardAccount.toHex, amount: 1_500_000)])
+        }
+        let witnessSetHex = try await session.sign(request)
+        await bridge.release()
+        try Self.expectStakingWitnesses(witnessSetHex, bodyHash: tx.transactionBody.hash(), derivation: derivation)
+    }
+
+    @Test("sign() a stake deregistration — device hash matches, payment + stake witnesses verify", .enabled(if: emulatorEnabled))
+    func liveDeregister() async throws {
+        let bridge = TrezorEmulatorBridge()
+        let session = TrezorSignSession(transport: bridge, network: .mainnet, options: Self.options)
+        let (tx, request, derivation) = try await Self.stakingTx(session: session) { stakeCred, _, base in
+            var body = base
+            body.certificates = .list([.unregister(Unregister(stakeCredential: stakeCred, coin: Coin(2_000_000)))])
+            return (body, [.stakeDeregistrationConway(stakePath: Self.stakePath, deposit: 2_000_000)], [])
+        }
+        let witnessSetHex = try await session.sign(request)
+        await bridge.release()
+        try Self.expectStakingWitnesses(witnessSetHex, bodyHash: tx.transactionBody.hash(), derivation: derivation)
+    }
+
     // MARK: - Fixtures
+
+    private static let stakePath = "m/1852'/1815'/0'/2/0"
+
+    /// Import → derivation → a base staking tx (1 input, 1 self-output, fee, ttl) that the caller
+    /// augments with withdrawals/certs, plus the packaged sign request (payment + stake witnesses).
+    private static func stakingTx(
+        session: TrezorSignSession,
+        _ augment: (StakeCredential, RewardAccount, TransactionBody) throws -> (TransactionBody, [HardwareCertificate], [HardwareWithdrawal])
+    ) async throws -> (Transaction, HardwareSignRequest, PublicHDDerivation) {
+        let account = try await session.importAccount(network: .mainnet, accountIndex: 0)
+        let derivation = try PublicHDDerivation(accountXPub: account.accountXPub, accountPath: account.accountPath, network: .mainnet)
+        let address = try derivation.address(role: 0, index: 0)
+        let spendPath = "m/1852'/1815'/0'/0/0"
+        let stakeHash = try derivation.stakeVerificationKey(index: 0).hash()
+        let stakeCred = StakeCredential(credential: .verificationKeyHash(stakeHash))
+        let rewardAccount = try Address(stakingPart: .verificationKeyHash(stakeHash), network: .mainnet).toBytes()
+
+        let input = TransactionInput(transactionId: TransactionId(payload: Data(repeating: 0xCD, count: 32)), index: 0)
+        let output = TransactionOutput(address: try Address.fromBech32(address), amount: Value(coin: 1_000_000))
+        var base = TransactionBody(inputs: .list([input]), outputs: [output], fee: Coin(170_000))
+        base.ttl = 500_000
+        let (body, hwCerts, hwWithdrawals) = try augment(stakeCred, rewardAccount, base)
+        let tx = Transaction(transactionBody: body, transactionWitnessSet: TransactionWitnessSet())
+
+        let spentUTxO = UTxO(input: input, output: TransactionOutput(address: try Address.fromBech32(address), amount: Value(coin: 2_000_000)))
+        let request = HardwareSignRequest(
+            requestId: "emu-staking", unsigned: tx, spentUTxOs: [spentUTxO],
+            addressPaths: [address: spendPath],
+            masterFingerprint: Data(repeating: 0, count: 4), origin: "TrezorEmulatorSignTests",
+            certificates: hwCerts, withdrawals: hwWithdrawals
+        )
+        return (tx, request, derivation)
+    }
+
+    /// The witness set has two witnesses (payment + stake), both verify over the body hash, and the
+    /// stake key is present — proving the withdrawal/cert wire encoding produced the same body the
+    /// firmware reconstructed.
+    private static func expectStakingWitnesses(_ witnessSetHex: String, bodyHash: Data, derivation: PublicHDDerivation) throws {
+        let witnesses = (try TransactionWitnessSet.fromCBORHex(witnessSetHex)).vkeyWitnesses?.asList ?? []
+        #expect(witnesses.count == 2)
+        for witness in witnesses {
+            let verifier = try Curve25519.Signing.PublicKey(rawRepresentation: witness.vkey.payload)
+            #expect(verifier.isValidSignature(witness.signature, for: bodyHash))
+        }
+        let stakePub = try derivation.stakeVerificationKey(index: 0).payload
+        #expect(witnesses.contains { $0.vkey.payload == stakePub })
+    }
 
     private static func selfSend(to address: String, txidByte: UInt8, amount: UInt64, fee: UInt64, ttl: UInt64?) throws -> Transaction {
         let input = TransactionInput(transactionId: TransactionId(payload: Data(repeating: txidByte, count: 32)), index: 0)
