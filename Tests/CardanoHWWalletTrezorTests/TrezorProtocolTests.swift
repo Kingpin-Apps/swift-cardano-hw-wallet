@@ -113,7 +113,7 @@ struct TrezorProtocolTests {
         let request = HardwareSignRequest(
             requestId: "t-req", unsigned: tx, spentUTxOs: [spentUTxO],
             addressPaths: [spendAddr: "\(accountPath)/0/0"],
-            masterFingerprint: Data(repeating: 0, count: 4), origin: "MansAmanaTests"
+            masterFingerprint: Data(repeating: 0, count: 4), origin: "HardwareTests"
         )
 
         let witnessSetHex = try await session.sign(request)

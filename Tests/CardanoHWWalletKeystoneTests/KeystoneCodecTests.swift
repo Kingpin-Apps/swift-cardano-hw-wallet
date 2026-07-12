@@ -24,7 +24,7 @@ struct KeystoneCodecTests {
             spentUTxOs: [utxo],
             addressPaths: addressPaths ?? [address: path],
             masterFingerprint: Data([0xde, 0xad, 0xbe, 0xef]),
-            origin: "MansAmanaTest"
+            origin: "HardwareTest"
         )
     }
 

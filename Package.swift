@@ -7,7 +7,7 @@ import PackageDescription
 // animated QR, `CardanoHWWalletKeystone`, added in a later phase). Ledger (BLE / USB-HID) and
 // Trezor (USB) slot in behind the same `HardwareSignSession` seam.
 //
-// Platforms match the swift-cardano-* graph MansAmana resolves (iOS 18 / macOS 15). The Keystone
+// Platforms match the swift-cardano-* stack (iOS 18 / macOS 15). The Keystone
 // SDK floor (iOS 15 / macOS 13) is lower, so no conflict when it's added.
 let package = Package(
     name: "swift-cardano-hw-wallet",
@@ -22,7 +22,7 @@ let package = Package(
         .library(name: "CardanoHWWalletTrezor", targets: ["CardanoHWWalletTrezor"]),
     ],
     dependencies: [
-        // Pinned to the same lines MansAmana resolves, so a single version of each package resolves
+        // Pinned to the same lines the swift-cardano-* stack resolves, so a single version of each package resolves
         // across the whole app graph.
         .package(url: "https://github.com/Kingpin-Apps/swift-cardano-core.git", from: "0.5.0"),
         .package(url: "https://github.com/Kingpin-Apps/swift-cardano-chain.git", from: "0.7.1"),

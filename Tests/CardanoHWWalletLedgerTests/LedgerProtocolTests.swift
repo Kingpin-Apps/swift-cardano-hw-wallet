@@ -124,7 +124,7 @@ struct LedgerProtocolTests {
             spentUTxOs: [spentUTxO],
             addressPaths: [spendAddr: "\(accountPath)/0/0"],
             masterFingerprint: Data(repeating: 0, count: 4),
-            origin: "MansAmanaTests"
+            origin: "HardwareTests"
         )
 
         // Scripted transport for the staged flow: INIT, input, output-basic, output-confirm, fee

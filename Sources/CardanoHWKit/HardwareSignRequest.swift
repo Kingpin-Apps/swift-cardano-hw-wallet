@@ -15,7 +15,7 @@ public struct HardwareSignRequest: Sendable {
     public let addressPaths: [String: String]
     /// The device's master-key fingerprint (`xfp`), so it recognizes its own keys.
     public let masterFingerprint: Data
-    /// A short label for the requesting app (shown on the device), e.g. "MansAmana".
+    /// A short label for the requesting app (shown on the device), e.g. "My Wallet".
     public let origin: String
     /// Staking / governance certificates in the transaction (device-neutral). Empty for a plain send.
     public let certificates: [HardwareCertificate]
