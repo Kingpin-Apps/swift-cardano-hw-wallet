@@ -13,12 +13,27 @@ public enum LedgerAPDU {
         public static let signTx: UInt8 = 0x21
     }
 
-    /// SignTx phases (`V8TxP1`).
+    /// SignTx P1 stages — the real app's **per-field** protocol (`app-cardano`
+    /// `command_builder.py` / `signTx.h`), one APDU (or group of sub-APDUs) per transaction field.
     public enum SignP1 {
-        public static let signWitness: UInt8 = 0x0f
-        public static let initTx: UInt8 = 0x10
-        public static let chunk: UInt8 = 0x11
-        public static let confirm: UInt8 = 0x12
+        public static let initTx: UInt8 = 0x01
+        public static let inputs: UInt8 = 0x02
+        public static let outputs: UInt8 = 0x03
+        public static let fee: UInt8 = 0x04
+        public static let ttl: UInt8 = 0x05
+        public static let certificates: UInt8 = 0x06
+        public static let withdrawals: UInt8 = 0x07
+        public static let validityStart: UInt8 = 0x09
+        public static let txConfirm: UInt8 = 0x0A       // returns the 32-byte tx hash
+        public static let witnesses: UInt8 = 0x0F       // returns a 64-byte signature
+    }
+
+    /// SignTx P2 sub-levels for the OUTPUTS stage (basic data → asset groups/tokens → confirm).
+    public enum SignP2 {
+        public static let outputBasic: UInt8 = 0x30
+        public static let outputAssetGroup: UInt8 = 0x31
+        public static let outputToken: UInt8 = 0x32
+        public static let outputConfirm: UInt8 = 0x33
     }
 
     public static let p1Unused: UInt8 = 0x00
@@ -28,9 +43,6 @@ public enum LedgerAPDU {
     public static let signatureLength = 64
     public static let extendedPublicKeyLength = 64   // 32-byte key ‖ 32-byte chain code
     public static let txHashLength = 32
-
-    /// Max SignTx CBOR-stream chunk (`MAX_SIGN_TX_CHUNK_SIZE`).
-    public static let maxChunkSize = 250
 
     /// Assemble an APDU: `CLA INS P1 P2 Lc data…`. `data` must be ≤ 255 bytes.
     public static func command(ins: UInt8, p1: UInt8, p2: UInt8, data: Data) -> Data {

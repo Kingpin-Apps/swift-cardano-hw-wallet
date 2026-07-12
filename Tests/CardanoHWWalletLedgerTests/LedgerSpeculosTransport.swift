@@ -118,32 +118,32 @@ final class LedgerSpeculosTransport: LedgerTransport, @unchecked Sendable {
 
     // MARK: - REST button approval
 
-    /// Loop until cancelled: read the current screen and press the buttons that advance a review to
-    /// approval. A first delay lets non-blocking APDUs (no prompt) answer before we ever press.
+    /// Loop until cancelled, driving the nano review to approval. The Cardano app pages *detail*
+    /// screens with RIGHT and confirms `ui_displayPrompt` pages with BOTH (its pages are
+    /// `[prompt-text (BOTH=confirm), "Reject?" (BOTH=reject)]`). Which is which is content-dependent,
+    /// so we use a change-detection rule that needs no keyword table: if we're on "Reject?" step back;
+    /// otherwise press BOTH — and if the screen didn't change, it was a detail page, so press RIGHT to
+    /// advance. Runs per `exchange` (each stage has its own prompt); the first delay lets no-prompt
+    /// APDUs answer before we ever press.
     private func autoApproveUntilCancelled() async {
         var firstDelay = true
-        while !Task.isCancelled {
-            try? await Task.sleep(nanoseconds: firstDelay ? 500_000_000 : 250_000_000)
+        var presses = 0
+        while !Task.isCancelled && presses < 120 {
+            try? await Task.sleep(nanoseconds: firstDelay ? 500_000_000 : 150_000_000)
             firstDelay = false
             if Task.isCancelled { return }
-            let screen = readScreen().lowercased()
-            if screen.isEmpty { continue }
-            if screen.contains("reject") && !approveWord(in: screen) {
-                // On a reject-only page, step forward rather than confirming it.
-                pressButton("right")
-            } else if approveWord(in: screen) {
-                pressButton("both")
+            let before = readScreen().lowercased()
+            if before.contains("reject") {
+                pressButton("left")            // never sit on / confirm the reject page
             } else {
-                pressButton("right")
+                pressButton("both")            // confirm a prompt page…
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                if readScreen().lowercased() == before && !before.isEmpty {
+                    pressButton("right")       // …no change → it was a detail page, advance
+                }
             }
+            presses += 1
         }
-    }
-
-    private func approveWord(in screen: String) -> Bool {
-        for word in ["approve", "confirm", "accept", "sign", "hold", "allow", "yes", "continue"] {
-            if screen.contains(word) { return true }
-        }
-        return false
     }
 
     private func readScreen() -> String {

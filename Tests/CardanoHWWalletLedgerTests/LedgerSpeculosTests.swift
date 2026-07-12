@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import Crypto
 import SwiftCardanoCore
 import CardanoHWKit
 @testable import CardanoHWWalletLedger
@@ -53,6 +54,52 @@ struct LedgerSpeculosTests {
         let derivation = try PublicHDDerivation(accountXPub: account.accountXPub, accountPath: account.accountPath, network: .mainnet)
         let derived = try derivation.address(role: 0, index: 0)
         #expect(try Address.fromBech32(derived).toBytes() == deviceAddress)
+    }
+
+    @Test("sign() drives the staged dialogue and the device witness verifies", .enabled(if: emulatorEnabled))
+    func liveSign() async throws {
+        let transport = LedgerSpeculosTransport()
+
+        // Import → derivation → the device's own receive address (self-send, one witness).
+        let account = try await LedgerSignSession(transport: transport, network: .mainnet)
+            .importAccount(network: .mainnet, accountIndex: 0)
+        let derivation = try PublicHDDerivation(accountXPub: account.accountXPub, accountPath: account.accountPath, network: .mainnet)
+        let address = try derivation.address(role: 0, index: 0)
+        let spendPath = "m/1852'/1815'/0'/0/0"
+
+        let input = TransactionInput(transactionId: TransactionId(payload: Data(repeating: 0xAB, count: 32)), index: 0)
+        let output = TransactionOutput(address: try Address.fromBech32(address), amount: Value(coin: 1_000_000))
+        var body = TransactionBody(inputs: .list([input]), outputs: [output], fee: Coin(170_000))
+        body.ttl = 500_000
+        let tx = Transaction(transactionBody: body, transactionWitnessSet: TransactionWitnessSet())
+        let bodyHash = tx.transactionBody.hash()
+
+        let spentUTxO = UTxO(input: input, output: TransactionOutput(address: try Address.fromBech32(address), amount: Value(coin: 2_000_000)))
+        let request = HardwareSignRequest(
+            requestId: "emu-ledger-send", unsigned: tx, spentUTxOs: [spentUTxO],
+            addressPaths: [address: spendPath],
+            masterFingerprint: Data(repeating: 0, count: 4), origin: "LedgerSpeculosTests"
+        )
+
+        let session = LedgerSignSession(transport: transport, network: .mainnet, options: LedgerSigningOptions(tagCborSets: false), derivation: derivation)
+        let witnessSetHex = try await session.sign(request)
+        transport.close()
+
+        // sign() already guarded the device tx hash == body.hash() (so tagCborSets is correct against
+        // real firmware). Verify the returned witness.
+        let witnesses = (try TransactionWitnessSet.fromCBORHex(witnessSetHex)).vkeyWitnesses?.asList ?? []
+        #expect(witnesses.count == 1)
+        guard let witness = witnesses.first else { return }
+        let pubKey = witness.vkey.payload
+        #expect(pubKey == (try derivation.paymentVerificationKey(role: 0, index: 0).payload))
+        let verifier = try Curve25519.Signing.PublicKey(rawRepresentation: pubKey)
+        #expect(verifier.isValidSignature(witness.signature, for: bodyHash))
+        #expect(try !WitnessMerge.mergedCBORHex(unsigned: tx, witnessSetHex: witnessSetHex).isEmpty)
+
+        print("EMU-LEDGER-SIGN bodyHash=\(bodyHash.toHex)")
+        print("EMU-LEDGER-SIGN pubKey=\(pubKey.toHex)")
+        print("EMU-LEDGER-SIGN signature=\(witness.signature.toHex)")
+        print("EMU-LEDGER-SIGN witnessSet=\(witnessSetHex)")
     }
 
     // deriveAddress APDU (INS 0x11, P1_RETURN=0x01): addrType BASE(0) + networkId mainnet(1) +

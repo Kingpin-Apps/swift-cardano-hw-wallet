@@ -29,21 +29,28 @@ public struct LedgerSigningOptions: Sendable, Equatable {
     }
 }
 
-/// Reproduces Ledger's **v8** custom transaction serialization (`serializeTransactionRaw` +
-/// `serializeTxInitData`), which the device parses, re-CBORs, hashes, and signs. This is *not* CBOR —
-/// it's Ledger's flat wire format. Scoped to the first cut: **plain ADA + native-asset sends** (any
-/// inputs, third-party + native-token outputs, fee, ttl, validity start). Certificates, withdrawals,
-/// mint, collateral, governance, and datums are rejected here and handled in a later pass.
+/// Builds the Ledger Cardano **SignTx** APDU stream in the real app's **per-field staged** protocol
+/// (`LedgerHQ/app-cardano`, verified against its `command_builder.py` + the Speculos emulator): a
+/// separate APDU (or group of sub-APDUs) for INIT, each input, each output (basic → asset groups /
+/// tokens → confirm), fee, ttl, each certificate, each withdrawal, validity start, a final tx-confirm
+/// (which returns the body hash), then one witness request per path. Scope: **plain ADA + native-asset
+/// sends + staking/governance certificates + withdrawals.** Mint, collateral, datums, plutus, and
+/// pool-registration are rejected here and handled in a later pass.
 public enum LedgerCardanoSerializer {
 
-    // Wire constants (`v8/serialization/wireTypes.ts`).
+    // Wire constants (`app-cardano` enums, confirmed against the emulator).
     private static let includedNo: UInt8 = 0x01
     private static let includedYes: UInt8 = 0x02
-    private static let signingModeOrdinary: UInt8 = 3
-    private static let destThirdParty: UInt8 = 1
-    private static let credentialKeyPath: UInt8 = 0   // Ledger CredentialType.KEY_PATH
+    private static let signingModeOrdinary: UInt8 = 0x03      // TransactionSigningMode.ORDINARY_TRANSACTION
+    private static let destThirdParty: UInt8 = 0x01           // TxOutputDestinationType.THIRD_PARTY
+    private static let credentialKeyPath: UInt8 = 0           // CredentialType.KEY_PATH
+    private static let optionTagCborSets: UInt64 = 1          // TX_OPTIONS_TAG_CBOR_SETS (bit 0)
 
     private static func included(_ flag: Bool) -> UInt8 { flag ? includedYes : includedNo }
+
+    private static func apdu(_ p1: UInt8, _ p2: UInt8, _ data: Data) -> Data {
+        LedgerAPDU.command(ins: LedgerAPDU.INS.signTx, p1: p1, p2: p2, data: data)
+    }
 
     // MARK: - Scope guard
 
@@ -67,45 +74,51 @@ public enum LedgerCardanoSerializer {
         }
     }
 
-    // MARK: - Raw serialization
+    // MARK: - Per-field payloads
 
-    /// The flat wire form the device streams and hashes.
-    public static func serializeTransactionRaw(
-        _ tx: Transaction,
-        certificates: [HardwareCertificate] = [],
-        withdrawals: [HardwareWithdrawal] = []
-    ) throws -> Data {
-        let body = tx.transactionBody
-        try assertInScope(body)
+    /// INPUTS (P1=0x02): 32-byte prev tx hash ‖ 4-byte output index.
+    private static func inputData(_ input: TransactionInput) -> Data {
+        var out = input.transactionId.payload
+        out.append(contentsOf: LedgerBytes.uint32BE(UInt32(input.index)))
+        return out
+    }
+
+    /// OUTPUTS basic data (P1=0x03, P2=0x30): format ‖ third-party destination ‖ coin ‖ tokenBundleLen
+    /// ‖ datum flag ‖ reference-script flag. (Datum + reference script are out of scope → NO.)
+    private static func outputBasicData(_ output: TransactionOutput, assetGroupCount: Int) -> Data {
         var out = Data()
+        out.append(output.postAlonzo ? 1 : 0)                       // MAP_BABBAGE=1 / ARRAY_LEGACY=0
+        let address = output.address.toBytes()
+        out.append(destThirdParty)
+        out.append(contentsOf: LedgerBytes.uint32BE(UInt32(address.count)))
+        out.append(address)
+        out.append(contentsOf: LedgerBytes.uint64BE(UInt64(output.amount.coin)))
+        out.append(contentsOf: LedgerBytes.uint32BE(UInt32(assetGroupCount)))
+        out.append(included(false))                                  // datum
+        out.append(included(false))                                  // reference script
+        return out
+    }
 
-        for input in body.inputs.asArray {
-            out.append(input.transactionId.payload)                       // 32-byte tx hash
-            out.append(contentsOf: LedgerBytes.uint32BE(UInt32(input.index)))
-        }
+    /// ASSET GROUP (P1=0x03, P2=0x31): 28-byte policy id ‖ 4-byte token count.
+    private static func assetGroupData(policyId: Data, tokenCount: Int) -> Data {
+        var out = policyId
+        out.append(contentsOf: LedgerBytes.uint32BE(UInt32(tokenCount)))
+        return out
+    }
 
-        for output in body.outputs {
-            let outputBytes = try serializeOutput(output)
-            out.append(contentsOf: LedgerBytes.uint16BE(UInt16(outputBytes.count)))
-            out.append(outputBytes)
-        }
+    /// TOKEN (P1=0x03, P2=0x32): 4-byte name length ‖ asset name ‖ 8-byte signed amount.
+    private static func tokenData(name: Data, amount: Int64) -> Data {
+        var out = Data()
+        out.append(contentsOf: LedgerBytes.uint32BE(UInt32(name.count)))
+        out.append(name)
+        out.append(contentsOf: LedgerBytes.uint64BE(UInt64(bitPattern: amount)))
+        return out
+    }
 
-        out.append(contentsOf: LedgerBytes.uint64BE(UInt64(body.fee)))
-
-        if let ttl = body.ttl {
-            out.append(contentsOf: LedgerBytes.uint64BE(UInt64(ttl)))
-        }
-        for certificate in certificates {
-            out.append(try serializeCertificate(certificate))
-        }
-        for withdrawal in withdrawals {
-            out.append(contentsOf: LedgerBytes.uint64BE(withdrawal.amount))
-            out.append(try serializeCredential(path: withdrawal.stakePath))
-        }
-        if let validityStart = body.validityStart {
-            out.append(contentsOf: LedgerBytes.uint64BE(UInt64(validityStart)))
-        }
-        // mint / scriptDataHash / collateral / … : none (scope-guarded)
+    /// WITHDRAWALS (P1=0x07): 8-byte amount ‖ stake credential (KEY_PATH).
+    private static func withdrawalData(_ withdrawal: HardwareWithdrawal) throws -> Data {
+        var out = Data(LedgerBytes.uint64BE(withdrawal.amount))
+        out.append(try serializeCredential(path: withdrawal.stakePath))
         return out
     }
 
@@ -156,35 +169,6 @@ public enum LedgerCardanoSerializer {
         return data
     }
 
-    private static func serializeOutput(_ output: TransactionOutput) throws -> Data {
-        var out = Data()
-
-        // Destination: always third-party (raw address bytes). Change-as-path is a UX-only
-        // optimization; third-party is correct for every output.
-        let address = output.address.toBytes()
-        out.append(destThirdParty)
-        out.append(contentsOf: LedgerBytes.uint16BE(UInt16(address.count)))
-        out.append(address)
-
-        out.append(contentsOf: LedgerBytes.uint64BE(UInt64(output.amount.coin)))
-        out.append(output.postAlonzo ? 1 : 0)          // TxOutputFormat: MAP_BABBAGE=1 / ARRAY_LEGACY=0
-        out.append(included(false))                     // datum
-        out.append(included(false))                     // reference script
-
-        let groups = canonicalAssetGroups(output.amount.multiAsset)
-        out.append(contentsOf: LedgerBytes.uint16BE(UInt16(groups.count)))
-        for group in groups {
-            out.append(group.policyId)                  // 28-byte policy id
-            out.append(contentsOf: LedgerBytes.uint16BE(UInt16(group.tokens.count)))
-            for token in group.tokens {
-                out.append(UInt8(token.name.count))
-                out.append(token.name)
-                out.append(contentsOf: LedgerBytes.uint64BE(UInt64(token.amount)))
-            }
-        }
-        return out
-    }
-
     /// Multi-asset groups in canonical order (policy id, then asset name — both by raw bytes), so the
     /// device's reconstructed CBOR matches a canonical encoder.
     private static func canonicalAssetGroups(_ multiAsset: MultiAsset) -> [(policyId: Data, tokens: [(name: Data, amount: Int64)])] {
@@ -205,11 +189,11 @@ public enum LedgerCardanoSerializer {
 
     // MARK: - Init data
 
-    /// The SignTx INIT payload (`serializeTxInitData`) describing the transaction shape + witness count.
+    /// The SignTx INIT payload: options ‖ network ‖ per-field option flags ‖ signing mode ‖ 4-byte
+    /// element counts ‖ witness-path count. Byte order matches the app's `sign_tx_init`.
     public static func serializeTxInitData(
         _ tx: Transaction,
         witnessPaths: [LedgerBIP32Path],
-        rawTxLength: Int,
         network: LedgerNetwork,
         options: LedgerSigningOptions,
         certificateCount: Int = 0,
@@ -219,39 +203,39 @@ public enum LedgerCardanoSerializer {
         try assertInScope(body)
         var out = Data()
 
-        let optionFlags: UInt64 = options.tagCborSets ? 1 : 0
-        out.append(contentsOf: LedgerBytes.uint64BE(optionFlags))
-        out.append(network.networkId)
-        out.append(contentsOf: LedgerBytes.uint32BE(network.protocolMagic))
-        out.append(signingModeOrdinary)
-        out.append(contentsOf: LedgerBytes.uint16BE(UInt16(body.inputs.count)))
-        out.append(contentsOf: LedgerBytes.uint16BE(UInt16(body.outputs.count)))
-        out.append(included(body.ttl != nil))
-        out.append(contentsOf: LedgerBytes.uint16BE(UInt16(certificateCount)))
-        out.append(contentsOf: LedgerBytes.uint16BE(UInt16(withdrawalCount)))
-        out.append(included(false))                          // auxiliary data
-        out.append(included(body.validityStart != nil))
-        out.append(contentsOf: LedgerBytes.uint16BE(0))     // mint
-        out.append(included(false))                          // script data hash
-        out.append(contentsOf: LedgerBytes.uint16BE(0))     // collateral inputs
-        out.append(contentsOf: LedgerBytes.uint16BE(0))     // required signers
-        out.append(included(body.networkId != nil))          // include network id in body
-        out.append(included(false))                          // collateral output
-        out.append(included(false))                          // total collateral
-        out.append(contentsOf: LedgerBytes.uint16BE(0))     // reference inputs
-        out.append(contentsOf: LedgerBytes.uint16BE(0))     // voting procedures
-        out.append(included(false))                          // treasury
-        out.append(included(false))                          // donation
-        out.append(contentsOf: LedgerBytes.uint16BE(UInt16(witnessPaths.count)))
-        out.append(contentsOf: LedgerBytes.uint16BE(UInt16(rawTxLength)))
+        let optionFlags: UInt64 = options.tagCborSets ? optionTagCborSets : 0
+        out.append(contentsOf: LedgerBytes.uint64BE(optionFlags))     // options (8B)
+        out.append(network.networkId)                                 // network id (1B)
+        out.append(contentsOf: LedgerBytes.uint32BE(network.protocolMagic))  // protocol magic (4B)
+        out.append(included(body.ttl != nil))                         // ttl
+        out.append(included(false))                                   // auxiliary data
+        out.append(included(body.validityStart != nil))              // validity interval start
+        out.append(included(false))                                   // mint
+        out.append(included(false))                                   // script data hash
+        out.append(included(body.networkId != nil))                  // include network id in body
+        out.append(included(false))                                   // collateral output
+        out.append(included(false))                                   // total collateral
+        out.append(included(false))                                   // treasury
+        out.append(included(false))                                   // donation
+        out.append(signingModeOrdinary)                              // signing mode (1B)
+        out.append(contentsOf: LedgerBytes.uint32BE(UInt32(body.inputs.count)))    // inputs (4B)
+        out.append(contentsOf: LedgerBytes.uint32BE(UInt32(body.outputs.count)))   // outputs (4B)
+        out.append(contentsOf: LedgerBytes.uint32BE(UInt32(certificateCount)))     // certificates (4B)
+        out.append(contentsOf: LedgerBytes.uint32BE(UInt32(withdrawalCount)))      // withdrawals (4B)
+        out.append(contentsOf: LedgerBytes.uint32BE(0))              // collateral inputs (4B)
+        out.append(contentsOf: LedgerBytes.uint32BE(0))              // required signers (4B)
+        out.append(contentsOf: LedgerBytes.uint32BE(0))              // reference inputs (4B)
+        out.append(contentsOf: LedgerBytes.uint32BE(0))              // voting procedures (4B)
+        out.append(contentsOf: LedgerBytes.uint32BE(UInt32(witnessPaths.count)))   // witness paths (4B)
         return out
     }
 
     // MARK: - APDU stream
 
-    /// The full ordered APDU stream for a SignTx: INIT → CBOR chunks (last is CONFIRM) → one witness
-    /// request per path. Callers exchange these in order; the CONFIRM response is the tx hash and each
-    /// witness response is a 64-byte signature.
+    /// The full ordered SignTx APDU stream in the app's staged protocol: INIT → each input → each
+    /// output (basic → asset groups/tokens → confirm) → fee → ttl → certificates → withdrawals →
+    /// validity start → **tx-confirm (returns the body hash)** → one witness request per path (each
+    /// returns a 64-byte signature).
     public static func signTxAPDUs(
         _ tx: Transaction,
         witnessPaths: [LedgerBIP32Path],
@@ -260,38 +244,53 @@ public enum LedgerCardanoSerializer {
         certificates: [HardwareCertificate] = [],
         withdrawals: [HardwareWithdrawal] = []
     ) throws -> [Data] {
-        let rawTx = try serializeTransactionRaw(tx, certificates: certificates, withdrawals: withdrawals)
+        let body = tx.transactionBody
+        try assertInScope(body)
+
         let initData = try serializeTxInitData(
-            tx, witnessPaths: witnessPaths, rawTxLength: rawTx.count, network: network, options: options,
+            tx, witnessPaths: witnessPaths, network: network, options: options,
             certificateCount: certificates.count, withdrawalCount: withdrawals.count
         )
+        var apdus: [Data] = [apdu(LedgerAPDU.SignP1.initTx, LedgerAPDU.p2Unused, initData)]
 
-        var apdus: [Data] = [
-            LedgerAPDU.command(ins: LedgerAPDU.INS.signTx, p1: LedgerAPDU.SignP1.initTx, p2: LedgerAPDU.p2Unused, data: initData)
-        ]
+        for input in body.inputs.asArray {
+            apdus.append(apdu(LedgerAPDU.SignP1.inputs, LedgerAPDU.p2Unused, inputData(input)))
+        }
 
-        var offset = 0
-        while offset < rawTx.count {
-            let end = min(offset + LedgerAPDU.maxChunkSize, rawTx.count)
-            let chunk = rawTx.subdata(in: offset..<end)
-            offset = end
-            let isLast = offset >= rawTx.count
-            apdus.append(LedgerAPDU.command(
-                ins: LedgerAPDU.INS.signTx,
-                p1: isLast ? LedgerAPDU.SignP1.confirm : LedgerAPDU.SignP1.chunk,
-                p2: LedgerAPDU.p2Unused,
-                data: chunk
-            ))
+        for output in body.outputs {
+            let groups = canonicalAssetGroups(output.amount.multiAsset)
+            apdus.append(apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputBasic,
+                              outputBasicData(output, assetGroupCount: groups.count)))
+            for group in groups {
+                apdus.append(apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputAssetGroup,
+                                  assetGroupData(policyId: group.policyId, tokenCount: group.tokens.count)))
+                for token in group.tokens {
+                    apdus.append(apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputToken,
+                                      tokenData(name: token.name, amount: token.amount)))
+                }
+            }
+            apdus.append(apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputConfirm, Data()))
         }
-        // Empty tx would produce no chunk (impossible in scope), but guard the CONFIRM anyway.
-        if rawTx.isEmpty {
-            apdus.append(LedgerAPDU.command(ins: LedgerAPDU.INS.signTx, p1: LedgerAPDU.SignP1.confirm, p2: LedgerAPDU.p2Unused, data: Data()))
+
+        apdus.append(apdu(LedgerAPDU.SignP1.fee, LedgerAPDU.p2Unused, Data(LedgerBytes.uint64BE(UInt64(body.fee)))))
+        if let ttl = body.ttl {
+            apdus.append(apdu(LedgerAPDU.SignP1.ttl, LedgerAPDU.p2Unused, Data(LedgerBytes.uint64BE(UInt64(ttl)))))
         }
+        for certificate in certificates {
+            apdus.append(apdu(LedgerAPDU.SignP1.certificates, LedgerAPDU.p2Unused, try serializeCertificate(certificate)))
+        }
+        for withdrawal in withdrawals {
+            apdus.append(apdu(LedgerAPDU.SignP1.withdrawals, LedgerAPDU.p2Unused, try withdrawalData(withdrawal)))
+        }
+        if let validityStart = body.validityStart {
+            apdus.append(apdu(LedgerAPDU.SignP1.validityStart, LedgerAPDU.p2Unused, Data(LedgerBytes.uint64BE(UInt64(validityStart)))))
+        }
+
+        // Final review + confirm → returns the 32-byte tx hash.
+        apdus.append(apdu(LedgerAPDU.SignP1.txConfirm, LedgerAPDU.p2Unused, Data()))
 
         for path in witnessPaths {
-            apdus.append(LedgerAPDU.command(
-                ins: LedgerAPDU.INS.signTx, p1: LedgerAPDU.SignP1.signWitness, p2: LedgerAPDU.p2Unused, data: path.encoded()
-            ))
+            apdus.append(apdu(LedgerAPDU.SignP1.witnesses, LedgerAPDU.p2Unused, path.encoded()))
         }
         return apdus
     }

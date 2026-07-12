@@ -53,31 +53,37 @@ struct LedgerProtocolTests {
 
     // MARK: - Serialization
 
-    @Test("Raw tx serialization leads with the input hash + index and INIT declares the shape")
+    @Test("SignTx stages per-field APDUs in order and INIT declares the shape")
     func serialization() throws {
         let (engine, _) = try wallet()
         let spendAddr = try engine.address(role: 0, index: 0)
         let tx = try Self.simpleTx(spendAddress: spendAddr, txidByte: 0x11, fee: 200_000, ttl: 900)
-
-        let raw = try LedgerCardanoSerializer.serializeTransactionRaw(tx)
-        #expect(Array(raw.prefix(32)) == Array(repeating: 0x11, count: 32))   // input tx hash
-        #expect(Array(raw[32...35]) == [0x00, 0x00, 0x00, 0x00])              // input index 0 (BE)
-
         let path = try LedgerBIP32Path("\(accountPath)/0/0")
-        let initData = try LedgerCardanoSerializer.serializeTxInitData(
-            tx, witnessPaths: [path], rawTxLength: raw.count, network: .preprod, options: .init()
-        )
-        let b = Array(initData)
-        #expect(Array(b[0...7]) == [0, 0, 0, 0, 0, 0, 0, 0])   // option flags (tagCborSets=false)
+
+        let apdus = try LedgerCardanoSerializer.signTxAPDUs(tx, witnessPaths: [path], network: .preprod, options: .init())
+        // INIT, input, output-basic, output-confirm, fee, ttl, tx-confirm, witness.
+        #expect(apdus.map { Self.p1($0) } == [0x01, 0x02, 0x03, 0x03, 0x04, 0x05, 0x0A, 0x0F])
+        // Every APDU is SIGN_TX (INS 0x21) on CLA 0xD7.
+        #expect(apdus.allSatisfy { Array($0)[0] == 0xD7 && Array($0)[1] == 0x21 })
+
+        // The input APDU carries the 32-byte prev hash + 4-byte index.
+        let inputData = Array(apdus[1].dropFirst(5))
+        #expect(Array(inputData.prefix(32)) == Array(repeating: 0x11, count: 32))
+        #expect(Array(inputData[32...35]) == [0, 0, 0, 0])
+
+        // INIT payload byte layout (data starts after the 5-byte APDU header).
+        let b = Array(apdus[0].dropFirst(5))
+        #expect(Array(b[0...7]) == [0, 0, 0, 0, 0, 0, 0, 0])   // options (tagCborSets=false)
         #expect(b[8] == 0)                                      // networkId (preprod testnet)
         #expect(Array(b[9...12]) == [0, 0, 0, 1])               // protocol magic (preprod = 1)
-        #expect(b[13] == 3)                                     // signing mode ORDINARY
-        #expect(Array(b[14...15]) == [0, 1])                    // input count
-        #expect(Array(b[16...17]) == [0, 1])                    // output count
-        #expect(b[18] == 2)                                     // ttl included = YES
+        #expect(b[13] == 2)                                     // ttl flag = YES
+        #expect(b[23] == 3)                                     // signing mode ORDINARY
+        #expect(Array(b[24...27]) == [0, 0, 0, 1])              // inputs count
+        #expect(Array(b[28...31]) == [0, 0, 0, 1])              // outputs count
+        #expect(Array(b[56...59]) == [0, 0, 0, 1])              // witness-path count
     }
 
-    @Test("Certificates/mint are rejected as out of scope")
+    @Test("Mint is rejected as out of scope")
     func scopeGuard() throws {
         let (engine, _) = try wallet()
         let spendAddr = try engine.address(role: 0, index: 0)
@@ -85,10 +91,14 @@ struct LedgerProtocolTests {
         var body = tx.transactionBody
         body.mint = MultiAsset([:])
         tx = Transaction(transactionBody: body, transactionWitnessSet: tx.transactionWitnessSet)
+        let path = try LedgerBIP32Path("\(accountPath)/0/0")
         #expect(throws: LedgerError.self) {
-            _ = try LedgerCardanoSerializer.serializeTransactionRaw(tx)
+            _ = try LedgerCardanoSerializer.signTxAPDUs(tx, witnessPaths: [path], network: .preprod, options: .init())
         }
     }
+
+    /// The P1 byte (index 2) of an assembled APDU.
+    private static func p1(_ apdu: Data) -> UInt8 { Array(apdu)[2] }
 
     // MARK: - Full sign round-trip (real signature)
 
@@ -117,8 +127,9 @@ struct LedgerProtocolTests {
             origin: "MansAmanaTests"
         )
 
-        // Scripted transport: INIT → (single chunk == CONFIRM, returns tx hash) → witness (returns sig).
-        let transport = MockLedgerTransport(responses: [Data(), bodyHash, signature])
+        // Scripted transport for the staged flow: INIT, input, output-basic, output-confirm, fee
+        // (all empty), tx-confirm (returns tx hash), witness (returns signature) = 7 exchanges.
+        let transport = MockLedgerTransport(responses: [Data(), Data(), Data(), Data(), Data(), bodyHash, signature])
         let session = LedgerSignSession(transport: transport, network: .preprod, derivation: engine)
 
         let witnessSetHex = try await session.sign(request)
@@ -141,12 +152,12 @@ struct LedgerProtocolTests {
         let signedHex = try WitnessMerge.mergedCBORHex(unsigned: tx, witnessSetHex: witnessSetHex)
         #expect(!signedHex.isEmpty)
 
-        // The session sent INIT + one CONFIRM chunk + one witness request = 3 APDUs.
+        // Staged APDUs: INIT, input, out-basic, out-confirm, fee, tx-confirm, witness = 7.
         let sent = await transport.recordedAPDUs()
-        #expect(sent.count == 3)
-        #expect(Array(sent[0])[1] == 0x21 && Array(sent[0])[2] == 0x10)   // SIGN_TX, INIT
-        #expect(Array(sent[1])[2] == 0x12)                                 // CONFIRM (last chunk)
-        #expect(Array(sent[2])[2] == 0x0f)                                 // SIGN_WITNESS
+        #expect(sent.count == 7)
+        #expect(Self.p1(sent[0]) == 0x01)   // INIT
+        #expect(Self.p1(sent[5]) == 0x0A)   // TX_CONFIRM (returns tx hash)
+        #expect(Self.p1(sent[6]) == 0x0F)   // WITNESS
     }
 
     @Test("sign() fails loudly when the device tx hash disagrees")
@@ -161,8 +172,8 @@ struct LedgerProtocolTests {
             addressPaths: [spendAddr: "\(accountPath)/0/0"],
             masterFingerprint: Data(repeating: 0, count: 4), origin: "t"
         )
-        // CONFIRM returns a wrong tx hash → integrity guard must throw before witnessing.
-        let transport = MockLedgerTransport(responses: [Data(), Data(repeating: 0xFF, count: 32), Data(repeating: 0xAB, count: 64)])
+        // TX_CONFIRM returns a wrong tx hash → integrity guard must throw before witnessing.
+        let transport = MockLedgerTransport(responses: [Data(), Data(), Data(), Data(), Data(), Data(repeating: 0xFF, count: 32), Data(repeating: 0xAB, count: 64)])
         let session = LedgerSignSession(transport: transport, network: .preprod, derivation: engine)
         await #expect(throws: LedgerError.self) {
             _ = try await session.sign(request)
@@ -182,10 +193,14 @@ struct LedgerProtocolTests {
         let body = TransactionBody(inputs: .list([input]), outputs: [output], fee: 200_000)
         let tx = Transaction(transactionBody: body, transactionWitnessSet: TransactionWitnessSet())
 
-        let raw = try LedgerCardanoSerializer.serializeTransactionRaw(tx)
-        // The 28-byte policy id and the asset name bytes must appear in the token bundle.
-        #expect(raw.range(of: Data(ledgerHex: policyHex)!) != nil)
-        #expect(raw.range(of: Data(ledgerHex: nameHex)!) != nil)
+        let path = try LedgerBIP32Path("\(accountPath)/0/0")
+        let apdus = try LedgerCardanoSerializer.signTxAPDUs(tx, witnessPaths: [path], network: .preprod, options: .init())
+        // The output stage emits an asset-group APDU (P2=0x31) with the policy id and a token APDU
+        // (P2=0x32) with the asset name.
+        let assetGroup = apdus.first { Self.p1($0) == 0x03 && Array($0)[3] == 0x31 }
+        let token = apdus.first { Self.p1($0) == 0x03 && Array($0)[3] == 0x32 }
+        #expect(assetGroup?.range(of: Data(ledgerHex: policyHex)!) != nil)
+        #expect(token?.range(of: Data(ledgerHex: nameHex)!) != nil)
     }
 
     // MARK: - Staking (certificate)
@@ -201,14 +216,14 @@ struct LedgerProtocolTests {
         let poolHashHex = String(repeating: "ab", count: 28)
         let cert = HardwareCertificate.stakeDelegation(stakePath: stakePath, poolKeyHashHex: poolHashHex)
 
-        // INIT declares certificates_count = 1.
+        // INIT declares certificates_count = 1, and the stream has a certificate APDU (P1=0x06).
         let paymentPath = try LedgerBIP32Path("\(accountPath)/0/0")
-        let raw = try LedgerCardanoSerializer.serializeTransactionRaw(tx, certificates: [cert])
-        let initData = try LedgerCardanoSerializer.serializeTxInitData(
-            tx, witnessPaths: [paymentPath], rawTxLength: raw.count, network: .preprod, options: .init(),
-            certificateCount: 1, withdrawalCount: 0
+        let stagedApdus = try LedgerCardanoSerializer.signTxAPDUs(
+            tx, witnessPaths: [paymentPath], network: .preprod, options: .init(), certificates: [cert]
         )
-        #expect(Array(initData)[19...20] == [0, 1])   // certificates count
+        let initData = Array(stagedApdus[0].dropFirst(5))
+        #expect(Array(initData[32...35]) == [0, 0, 0, 1])           // certificates count (4B)
+        #expect(stagedApdus.contains { Self.p1($0) == 0x06 })        // certificate stage present
 
         // Device signs the body hash with both the payment key (input) and the stake key (cert).
         let paymentLeaf = try root.derive(fromPath: "\(accountPath)/0/0")
@@ -224,8 +239,9 @@ struct LedgerProtocolTests {
             masterFingerprint: Data(repeating: 0, count: 4), origin: "t",
             certificates: [cert]
         )
-        // INIT → CONFIRM(tx hash) → payment witness → stake witness.
-        let transport = MockLedgerTransport(responses: [Data(), bodyHash, paySig, stakeSig])
+        // Staged: INIT, input, out-basic, out-confirm, fee, cert, tx-confirm, pay-witness, stake-witness
+        // = 9 exchanges; the tx-confirm (index 6) returns the body hash.
+        let transport = MockLedgerTransport(responses: [Data(), Data(), Data(), Data(), Data(), Data(), bodyHash, paySig, stakeSig])
         let session = LedgerSignSession(transport: transport, network: .preprod, derivation: engine)
 
         let witnessSetHex = try await session.sign(request)
@@ -238,10 +254,10 @@ struct LedgerProtocolTests {
         let verifier = BIP32ED25519PublicKey(publicKey: stakePub, chainCode: Data(stakeLeaf.chainCode))
         #expect(throws: Never.self) { _ = try verifier.verify(signature: stakeSig, message: bodyHash) }
 
-        // Four APDUs: INIT, CONFIRM chunk, 2 witness requests.
+        // Nine APDUs; the last two are the payment + stake witness requests.
         let sent = await transport.recordedAPDUs()
-        #expect(sent.count == 4)
-        #expect(Array(sent[2])[2] == 0x0f && Array(sent[3])[2] == 0x0f)   // both witness requests
+        #expect(sent.count == 9)
+        #expect(Self.p1(sent[7]) == 0x0F && Self.p1(sent[8]) == 0x0F)
     }
 
     // MARK: - Fixtures
