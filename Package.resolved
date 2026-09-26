@@ -168,8 +168,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Kingpin-Apps/swift-cardano-chain.git",
       "state" : {
-        "revision" : "8d169668df19c242df13500895e731014486f426",
-        "version" : "0.10.0"
+        "revision" : "f4d60910ed09337aa624a3fc8b414ef4b2bc2ff5",
+        "version" : "0.11.0"
       }
     },
     {
@@ -177,8 +177,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Kingpin-Apps/swift-cardano-core.git",
       "state" : {
-        "revision" : "0c691f9a69e2eb92e87452a887b3f00f4ebd12cf",
-        "version" : "0.8.1"
+        "revision" : "eba24176593b974033407d6a65195b323329c52c",
+        "version" : "0.8.2"
       }
     },
     {
@@ -204,8 +204,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Kingpin-Apps/swift-cardano-uplc.git",
       "state" : {
-        "revision" : "720c149d1062cf2a3e3c7556017eb740f697c099",
-        "version" : "0.7.0"
+        "revision" : "6573f93361bb0da5e9b14c44a61229809980bb30",
+        "version" : "0.7.1"
       }
     },
     {
@@ -296,6 +296,15 @@
       "state" : {
         "revision" : "5a21e34fa4c181403eff599c3c5d93ed554814a6",
         "version" : "0.2.2"
+      }
+    },
+    {
+      "identity" : "swift-kupo",
+      "kind" : "remoteSourceControl",
+      "location" : "https://github.com/Kingpin-Apps/swift-kupo.git",
+      "state" : {
+        "revision" : "dd996fb3b90ecee7bc4df2e688d61ca17c27ef5e",
+        "version" : "0.1.2"
       }
     },
     {
