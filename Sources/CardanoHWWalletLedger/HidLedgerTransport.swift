@@ -8,12 +8,17 @@ import CardanoHWKit
 public final class HidLedgerTransport: LedgerTransport, @unchecked Sendable {
     /// Ledger USB vendor id.
     public static let ledgerVendorID = 0x2C97
+    /// The HID usage page of a Ledger's APDU interface. Its other HID
+    /// interface is FIDO/U2F (`0xF1D0`), which does not speak APDUs.
+    public static let apduUsagePage = 0xFFA0
 
     private let device: USBHIDDevice
     private let channel: UInt16
 
     public init(channel: UInt16 = LedgerFraming.usbChannel) {
-        self.device = USBHIDDevice(vendorID: Self.ledgerVendorID, reportSize: LedgerFraming.usbPacketSize)
+        self.device = USBHIDDevice(
+            vendorID: Self.ledgerVendorID, usagePage: Self.apduUsagePage, reportSize: LedgerFraming.usbPacketSize
+        )
         self.channel = channel
     }
 

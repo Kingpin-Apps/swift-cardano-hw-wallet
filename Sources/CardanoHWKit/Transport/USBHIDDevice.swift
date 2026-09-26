@@ -11,6 +11,7 @@ import IOKit.hid
 /// background thread running a `CFRunLoop`.
 public final class USBHIDDevice: @unchecked Sendable {
     private let vendorID: Int
+    private let usagePage: Int?
     private let reportSize: Int
 
     private var manager: IOHIDManager?
@@ -24,8 +25,16 @@ public final class USBHIDDevice: @unchecked Sendable {
     private var waiters: [CheckedContinuation<Data, Error>] = []
     private var failure: Error?
 
-    public init(vendorID: Int, reportSize: Int = 64) {
+    /// - Parameters:
+    ///   - vendorID: The USB vendor id to match.
+    ///   - usagePage: The HID usage page of the interface to open. A device
+    ///     can expose several HID interfaces — a Ledger has its APDU interface
+    ///     (`0xFFA0`) beside a FIDO one (`0xF1D0`) — and matching the vendor
+    ///     alone opens whichever the system lists first.
+    ///   - reportSize: The size of one HID report.
+    public init(vendorID: Int, usagePage: Int? = nil, reportSize: Int = 64) {
         self.vendorID = vendorID
+        self.usagePage = usagePage
         self.reportSize = reportSize
     }
 
@@ -36,14 +45,16 @@ public final class USBHIDDevice: @unchecked Sendable {
         guard device == nil else { return }
 
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-        let match: [String: Any] = [kIOHIDVendorIDKey: vendorID]
+        var match: [String: Any] = [kIOHIDVendorIDKey: vendorID]
+        if let usagePage { match[kIOHIDPrimaryUsagePageKey] = usagePage }
         IOHIDManagerSetDeviceMatching(manager, match as CFDictionary)
         guard IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone)) == kIOReturnSuccess else {
             throw HardwareWalletError.derivationFailed("Could not open the USB-HID manager (permission / entitlement?).")
         }
         guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>, let first = devices.first else {
             IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-            throw HardwareWalletError.derivationFailed("No USB-HID device found for vendor 0x\(String(vendorID, radix: 16)).")
+            let page = usagePage.map { ", usage page 0x\(String($0, radix: 16))" } ?? ""
+            throw HardwareWalletError.derivationFailed("No USB-HID device found for vendor 0x\(String(vendorID, radix: 16))\(page).")
         }
 
         let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: reportSize)

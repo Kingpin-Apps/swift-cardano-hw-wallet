@@ -11,11 +11,16 @@ import CardanoHWKit
 public final class TrezorHIDPacketLink: HardwarePacketLink, @unchecked Sendable {
     /// Trezor One USB vendor id (`0x534C`).
     public static let trezorVendorID = 0x534C
+    /// The HID usage page of the Trezor One's wire interface; its other HID
+    /// interface is FIDO/U2F (`0xF1D0`).
+    public static let wireUsagePage = 0xFF00
 
     private let device: USBHIDDevice
 
     public init(vendorID: Int = TrezorHIDPacketLink.trezorVendorID) {
-        self.device = USBHIDDevice(vendorID: vendorID, reportSize: TrezorProtocolV1.reportSize)
+        self.device = USBHIDDevice(
+            vendorID: vendorID, usagePage: Self.wireUsagePage, reportSize: TrezorProtocolV1.reportSize
+        )
     }
 
     public func open() async throws { try device.open() }
