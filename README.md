@@ -40,7 +40,9 @@ wallet never touches a private key.
 | **Trezor**   | USB-HID + protobuf (Codec-v1 / THP v2)    | macOS                        |
 
 Keystone is air-gapped (QR only). Ledger signs over BLE on iOS and over BLE or USB on macOS. Trezor is
-USB-only, so macOS-only (no USB on iOS).
+USB-only, so macOS-only (no USB on iOS). The USB transport is HID, which covers the **Trezor One**; the
+Model T and Safe family expose a WebUSB bulk interface instead and need an `IOUSBHost` transport that
+is not written yet.
 
 ## Installation
 
@@ -59,6 +61,27 @@ Then add the products you need:
     .product(name: "CardanoHWWalletTrezor", package: "swift-cardano-hw-wallet"),   // macOS
     .product(name: "CardanoHWWalletKeystone", package: "swift-cardano-hw-wallet"), // iOS
 ])
+```
+
+Keystone's SDK depends on a package that declares a target named `SortedCollections`, as
+swift-collections does from 1.2 on. Two targets of one name cannot share a package graph, and this
+package's own pin does not carry over to yours, so hold swift-collections below 1.2 in your package or
+app as well:
+
+```swift
+.package(url: "https://github.com/apple/swift-collections.git", "1.1.0" ..< "1.2.0"),
+```
+
+### Sandboxed apps
+
+A sandboxed macOS app needs `com.apple.security.device.usb` for Ledger and Trezor over USB, and
+`com.apple.security.device.bluetooth` plus an `NSBluetoothAlwaysUsageDescription` for Ledger over BLE.
+An iOS app needs the Bluetooth usage description for Ledger and `NSCameraUsageDescription` for
+Keystone's QR scan. `Tools/sandbox-probe` checks a USB device from inside the App Sandbox:
+
+```sh
+Tools/sandbox-probe/run.sh ledger   # Ledger over USB, Cardano app open
+Tools/sandbox-probe/run.sh trezor   # Trezor One over USB
 ```
 
 ## Modules
