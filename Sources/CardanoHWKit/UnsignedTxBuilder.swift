@@ -1,3 +1,4 @@
+import BigInt
 import Foundation
 import SwiftCardanoCore
 import SwiftCardanoChain
@@ -63,8 +64,8 @@ public enum UnsignedTxBuilder {
         do {
             body = try await builder.build(changeAddress: changeAddress)
         } catch {
-            let total = candidateUTxOs.reduce(Int64(0)) { $0 + $1.output.amount.coin }
-            let required = outputs.reduce(Int64(0)) { $0 + $1.amount.coin }
+            let total = candidateUTxOs.reduce(BigInt(0)) { $0 + $1.output.amount.coin }
+            let required = outputs.reduce(BigInt(0)) { $0 + $1.amount.coin }
             if total < required {
                 throw HardwareWalletError.buildFailed("Not enough funds: need \(required), have \(total).")
             }

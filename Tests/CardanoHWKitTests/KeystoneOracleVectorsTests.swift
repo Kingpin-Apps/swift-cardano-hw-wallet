@@ -33,7 +33,7 @@ struct KeystoneOracleVectorsTests {
         var body = TransactionBody(inputs: .list([input]), outputs: [output], fee: Coin(170_000))
         body.ttl = 500_000
         let tx = Transaction(transactionBody: body, transactionWitnessSet: TransactionWitnessSet())
-        let bodyHash = tx.transactionBody.hash()
+        let bodyHash = try tx.transactionBody.hash()
         print("KEYSTONE-ORACLE bodyHash=\(bodyHash.toHex)")
 
         // Once pinned, verify the oracle's witness against this tx.

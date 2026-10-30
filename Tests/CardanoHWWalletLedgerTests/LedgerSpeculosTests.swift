@@ -72,7 +72,7 @@ struct LedgerSpeculosTests {
         var body = TransactionBody(inputs: .list([input]), outputs: [output], fee: Coin(170_000))
         body.ttl = 500_000
         let tx = Transaction(transactionBody: body, transactionWitnessSet: TransactionWitnessSet())
-        let bodyHash = tx.transactionBody.hash()
+        let bodyHash = try tx.transactionBody.hash()
 
         let spentUTxO = UTxO(input: input, output: TransactionOutput(address: try Address.fromBech32(address), amount: Value(coin: 2_000_000)))
         let request = HardwareSignRequest(
@@ -120,7 +120,7 @@ struct LedgerSpeculosTests {
         let transport = LedgerSpeculosTransport()
         let (tx, request, derivation) = try await Self.stakingTx(transport: transport) { stakeCred, _, base in
             var body = base
-            body.certificates = .list([.unregister(Unregister(stakeCredential: stakeCred, coin: Coin(2_000_000)))])
+            body.certificates = .list([.unregister(try Unregister(stakeCredential: stakeCred, coin: Coin(2_000_000)))])
             return (body, [.stakeDeregistrationConway(stakePath: Self.stakePath, deposit: 2_000_000)], [])
         }
         let witnessSetHex = try await request.session.sign(request.request)

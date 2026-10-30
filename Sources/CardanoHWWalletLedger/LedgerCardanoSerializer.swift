@@ -85,14 +85,14 @@ public enum LedgerCardanoSerializer {
 
     /// OUTPUTS basic data (P1=0x03, P2=0x30): format ‖ third-party destination ‖ coin ‖ tokenBundleLen
     /// ‖ datum flag ‖ reference-script flag. (Datum + reference script are out of scope → NO.)
-    private static func outputBasicData(_ output: TransactionOutput, assetGroupCount: Int) -> Data {
+    private static func outputBasicData(_ output: TransactionOutput, assetGroupCount: Int) throws -> Data {
         var out = Data()
         out.append(output.postAlonzo ? 1 : 0)                       // MAP_BABBAGE=1 / ARRAY_LEGACY=0
         let address = output.address.toBytes()
         out.append(destThirdParty)
         out.append(contentsOf: LedgerBytes.uint32BE(UInt32(address.count)))
         out.append(address)
-        out.append(contentsOf: LedgerBytes.uint64BE(UInt64(output.amount.coin)))
+        out.append(contentsOf: LedgerBytes.uint64BE(try HardwareAmounts.lovelace(output.amount)))
         out.append(contentsOf: LedgerBytes.uint32BE(UInt32(assetGroupCount)))
         out.append(included(false))                                  // datum
         out.append(included(false))                                  // reference script
@@ -107,11 +107,11 @@ public enum LedgerCardanoSerializer {
     }
 
     /// TOKEN (P1=0x03, P2=0x32): 4-byte name length ‖ asset name ‖ 8-byte signed amount.
-    private static func tokenData(name: Data, amount: Int64) -> Data {
+    private static func tokenData(name: Data, amount: UInt64) -> Data {
         var out = Data()
         out.append(contentsOf: LedgerBytes.uint32BE(UInt32(name.count)))
         out.append(name)
-        out.append(contentsOf: LedgerBytes.uint64BE(UInt64(bitPattern: amount)))
+        out.append(contentsOf: LedgerBytes.uint64BE(amount))
         return out
     }
 
@@ -167,24 +167,6 @@ public enum LedgerCardanoSerializer {
             throw LedgerError.app("Invalid \(label) hex: \(string)")
         }
         return data
-    }
-
-    /// Multi-asset groups in canonical order (policy id, then asset name — both by raw bytes), so the
-    /// device's reconstructed CBOR matches a canonical encoder.
-    private static func canonicalAssetGroups(_ multiAsset: MultiAsset) -> [(policyId: Data, tokens: [(name: Data, amount: Int64)])] {
-        multiAsset.data
-            .map { (policy, asset) in
-                let tokens = asset.data
-                    .map { (name, amount) in (name: name.payload, amount: amount) }
-                    .sorted { canonicalLess($0.name, $1.name) }
-                return (policyId: policy.payload, tokens: tokens)
-            }
-            .sorted { canonicalLess($0.policyId, $1.policyId) }
-    }
-
-    /// Canonical CBOR key order: shorter first, then lexicographic.
-    private static func canonicalLess(_ a: Data, _ b: Data) -> Bool {
-        a.count != b.count ? a.count < b.count : a.lexicographicallyPrecedes(b)
     }
 
     // MARK: - Init data
@@ -258,9 +240,9 @@ public enum LedgerCardanoSerializer {
         }
 
         for output in body.outputs {
-            let groups = canonicalAssetGroups(output.amount.multiAsset)
+            let groups = try HardwareAmounts.canonicalGroups(output.amount.multiAsset)
             apdus.append(apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputBasic,
-                              outputBasicData(output, assetGroupCount: groups.count)))
+                              try outputBasicData(output, assetGroupCount: groups.count)))
             for group in groups {
                 apdus.append(apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputAssetGroup,
                                   assetGroupData(policyId: group.policyId, tokenCount: group.tokens.count)))

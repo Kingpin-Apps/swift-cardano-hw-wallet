@@ -142,10 +142,10 @@ public enum TrezorCardanoSerializer {
         }
 
         for output in body.outputs {
-            let groups = canonicalAssetGroups(output.amount.multiAsset)
+            let groups = try HardwareAmounts.canonicalGroups(output.amount.multiAsset)
             var w = ProtobufWriter()
             w.string(1, try output.address.toBech32())         // address
-            w.varint(3, UInt64(output.amount.coin))            // amount
+            w.varint(3, try HardwareAmounts.lovelace(output.amount))  // amount
             w.varint(4, UInt64(groups.count))                  // asset_groups_count
             w.varint(6, output.postAlonzo ? 1 : 0)             // format: MAP_BABBAGE=1 / ARRAY_LEGACY=0
             messages.append(TrezorMessage(type: TrezorMessageType.cardanoTxOutput, payload: w.data))
@@ -158,7 +158,7 @@ public enum TrezorCardanoSerializer {
                 for token in group.tokens {
                     var t = ProtobufWriter()
                     t.bytes(1, token.name)                     // asset_name_bytes
-                    t.varint(2, UInt64(token.amount))          // amount
+                    t.varint(2, token.amount)                  // amount
                     messages.append(TrezorMessage(type: TrezorMessageType.cardanoToken, payload: t.data))
                 }
             }
@@ -227,22 +227,5 @@ public enum TrezorCardanoSerializer {
     /// An empty `CardanoTxHostAck`.
     public static func hostAckMessage() -> TrezorMessage {
         TrezorMessage(type: TrezorMessageType.cardanoTxHostAck, payload: Data())
-    }
-
-    // MARK: - Token canonical ordering (matches a canonical CBOR encoder)
-
-    private static func canonicalAssetGroups(_ multiAsset: MultiAsset) -> [(policyId: Data, tokens: [(name: Data, amount: Int64)])] {
-        multiAsset.data
-            .map { (policy, asset) in
-                let tokens = asset.data
-                    .map { (name, amount) in (name: name.payload, amount: amount) }
-                    .sorted { canonicalLess($0.name, $1.name) }
-                return (policyId: policy.payload, tokens: tokens)
-            }
-            .sorted { canonicalLess($0.policyId, $1.policyId) }
-    }
-
-    private static func canonicalLess(_ a: Data, _ b: Data) -> Bool {
-        a.count != b.count ? a.count < b.count : a.lexicographicallyPrecedes(b)
     }
 }

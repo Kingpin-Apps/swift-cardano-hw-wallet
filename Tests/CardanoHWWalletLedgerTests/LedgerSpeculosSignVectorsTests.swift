@@ -38,7 +38,7 @@ struct LedgerSpeculosSignVectorsTests {
 
         // Our staged serialization must reproduce the body hash the firmware reconstructed + signed
         // (i.e. tagCborSets=false matches swift-cardano-core's ordinary-tx set encoding).
-        #expect(tx.transactionBody.hash().toHex == expectedBodyHash)
+        #expect(try tx.transactionBody.hash().toHex == expectedBodyHash)
 
         // Replay the device responses for the staged flow: INIT, input, out-basic, out-confirm, fee,
         // ttl (all empty), tx-confirm (body hash), witness (signature) = 8 exchanges.
@@ -67,7 +67,7 @@ struct LedgerSpeculosSignVectorsTests {
         #expect(witnesses.first?.vkey.payload == (try derivation.paymentVerificationKey(role: 0, index: 0).payload))
         // ...and the signature verifies over the body hash.
         let verifier = try Curve25519.Signing.PublicKey(rawRepresentation: Self.hex(devicePubKey))
-        #expect(verifier.isValidSignature(signature, for: tx.transactionBody.hash()))
+        #expect(try verifier.isValidSignature(signature, for: tx.transactionBody.hash()))
     }
 
     private static func hex(_ s: String) -> Data {

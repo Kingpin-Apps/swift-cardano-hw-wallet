@@ -138,7 +138,7 @@ public actor TrezorSignSession: HardwareSigner {
         guard let deviceHash = reader.bytes(1) else {
             throw TrezorError.malformedResponse("CardanoTxBodyHash missing tx_hash.")
         }
-        let expected = unsigned.transactionBody.hash()
+        let expected = try unsigned.transactionBody.hash()
         guard deviceHash == expected else {
             throw TrezorError.malformedResponse(
                 "Device tx hash \(deviceHash.toHex) ≠ expected \(expected.toHex) — serialization mismatch (check tagCborSets)."

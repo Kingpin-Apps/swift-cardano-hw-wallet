@@ -38,7 +38,7 @@ struct TrezorEmulatorSignVectorsTests {
 
         // Our serialization must reproduce the body hash the firmware reconstructed and signed —
         // i.e. tagCborSets=false matches swift-cardano-core's ordinary-tx set encoding.
-        #expect(tx.transactionBody.hash().toHex == expectedBodyHash)
+        #expect(try tx.transactionBody.hash().toHex == expectedBodyHash)
 
         // Script the device's framed responses (Init ack, input ack, output ack, witness, body hash,
         // finished) using the REAL firmware pub key + signature.
@@ -84,7 +84,7 @@ struct TrezorEmulatorSignVectorsTests {
         #expect(witnesses.first?.signature == signature)
         // ...and the signature cryptographically verifies over the body hash.
         let verifier = try Curve25519.Signing.PublicKey(rawRepresentation: pubKey)
-        #expect(verifier.isValidSignature(signature, for: tx.transactionBody.hash()))
+        #expect(verifier.isValidSignature(signature, for: try tx.transactionBody.hash()))
         // ...and merges into a submittable signed tx.
         #expect(try !WitnessMerge.mergedCBORHex(unsigned: tx, witnessSetHex: witnessSetHex).isEmpty)
     }

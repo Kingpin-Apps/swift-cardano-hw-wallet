@@ -43,7 +43,7 @@ struct WitnessMergeTests {
         let merged = try WitnessMerge.merge(unsigned: unsigned, witnessSetHex: hex)
         #expect(merged.transactionWitnessSet.vkeyWitnesses != nil)
         // The body is the thing signed over — it must be byte-identical after the merge.
-        #expect(merged.transactionBody.hash() == unsigned.transactionBody.hash())
+        #expect(try merged.transactionBody.hash() == unsigned.transactionBody.hash())
         // And the merged tx re-encodes to CBOR.
         #expect(try WitnessMerge.mergedCBORHex(unsigned: unsigned, witnessSetHex: hex).isEmpty == false)
     }

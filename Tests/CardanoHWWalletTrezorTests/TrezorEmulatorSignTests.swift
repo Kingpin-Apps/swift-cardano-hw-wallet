@@ -46,7 +46,7 @@ struct TrezorEmulatorSignTests {
         let spendPath = "m/1852'/1815'/0'/0/0"
 
         let tx = try Self.selfSend(to: address, txidByte: 0xAB, amount: 1_000_000, fee: 170_000, ttl: 500_000)
-        let bodyHash = tx.transactionBody.hash()
+        let bodyHash = try tx.transactionBody.hash()
 
         let input = TransactionInput(transactionId: TransactionId(payload: Data(repeating: 0xAB, count: 32)), index: 0)
         let spentUTxO = UTxO(input: input, output: TransactionOutput(address: try Address.fromBech32(address), amount: Value(coin: 2_000_000)))
@@ -112,7 +112,7 @@ struct TrezorEmulatorSignTests {
         let session = TrezorSignSession(transport: bridge, network: .mainnet, options: Self.options)
         let (tx, request, derivation) = try await Self.stakingTx(session: session) { stakeCred, _, base in
             var body = base
-            body.certificates = .list([.unregister(Unregister(stakeCredential: stakeCred, coin: Coin(2_000_000)))])
+            body.certificates = .list([.unregister(try Unregister(stakeCredential: stakeCred, coin: Coin(2_000_000)))])
             return (body, [.stakeDeregistrationConway(stakePath: Self.stakePath, deposit: 2_000_000)], [])
         }
         let witnessSetHex = try await session.sign(request)

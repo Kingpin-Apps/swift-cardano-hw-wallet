@@ -109,7 +109,7 @@ struct LedgerProtocolTests {
         let tx = try Self.simpleTx(spendAddress: spendAddr, txidByte: 0x33, fee: 180_000, ttl: nil)
 
         // The device signs the body hash with the private key at the input path.
-        let bodyHash = tx.transactionBody.hash()
+        let bodyHash = try tx.transactionBody.hash()
         let leaf = try root.derive(fromPath: "\(accountPath)/0/0")
         let priv = try BIP32ED25519PrivateKey(privateKey: Data(leaf.xPrivateKey), chainCode: Data(leaf.chainCode))
         let signature = try priv.sign(message: bodyHash)
@@ -210,7 +210,7 @@ struct LedgerProtocolTests {
         let (engine, root) = try wallet()
         let spendAddr = try engine.address(role: 0, index: 0)
         let tx = try Self.simpleTx(spendAddress: spendAddr, txidByte: 0x55, fee: 180_000, ttl: nil)
-        let bodyHash = tx.transactionBody.hash()
+        let bodyHash = try tx.transactionBody.hash()
 
         let stakePath = "\(accountPath)/2/0"
         let poolHashHex = String(repeating: "ab", count: 28)

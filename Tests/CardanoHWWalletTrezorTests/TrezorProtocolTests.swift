@@ -78,7 +78,7 @@ struct TrezorProtocolTests {
         let (engine, root) = try wallet()
         let spendAddr = try engine.address(role: 0, index: 0)
         let tx = try Self.simpleTx(spendAddress: spendAddr, txidByte: 0x33, fee: 180_000, ttl: nil)
-        let bodyHash = tx.transactionBody.hash()
+        let bodyHash = try tx.transactionBody.hash()
 
         // Device-side signature with the private key at the input path.
         let leaf = try root.derive(fromPath: "\(accountPath)/0/0")
@@ -177,7 +177,7 @@ struct TrezorProtocolTests {
         let (engine, root) = try wallet()
         let spendAddr = try engine.address(role: 0, index: 0)
         let tx = try Self.simpleTx(spendAddress: spendAddr, txidByte: 0x66, fee: 180_000, ttl: nil)
-        let bodyHash = tx.transactionBody.hash()
+        let bodyHash = try tx.transactionBody.hash()
 
         let stakePath = "\(accountPath)/2/0"
         let drepHashHex = String(repeating: "cd", count: 28)

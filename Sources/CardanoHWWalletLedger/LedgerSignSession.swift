@@ -62,7 +62,7 @@ public actor LedgerSignSession: HardwareSigner {
         // (and thus the signature) is over a different transaction — most likely a `tagCborSets`
         // mismatch. Fail loudly rather than submit an invalid witness.
         if deviceTxHash.count == LedgerAPDU.txHashLength {
-            let expected = request.unsigned.transactionBody.hash()
+            let expected = try request.unsigned.transactionBody.hash()
             guard deviceTxHash == expected else {
                 throw LedgerError.app(
                     "Device tx hash \(deviceTxHash.toHex) ≠ expected \(expected.toHex) — transaction serialization mismatch (check LedgerSigningOptions.tagCborSets)."
