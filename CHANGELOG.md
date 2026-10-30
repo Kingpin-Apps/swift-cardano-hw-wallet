@@ -1,3 +1,9 @@
+## 0.2.1 (2026-10-30)
+
+### Fix
+
+- build against swift-cardano-core 0.10 and send devices only Word64 amounts
+
 ## 0.2.0 (2026-09-26)
 
 ### Fix
