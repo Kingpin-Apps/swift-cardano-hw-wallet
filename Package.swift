@@ -24,9 +24,9 @@ let package = Package(
     dependencies: [
         // Pinned to the same lines the swift-cardano-* stack resolves, so a single version of each package resolves
         // across the whole app graph.
-        .package(url: "https://github.com/Kingpin-Apps/swift-cardano-core.git", from: "0.10.0"),
-        .package(url: "https://github.com/Kingpin-Apps/swift-cardano-chain.git", from: "0.14.0"),
-        .package(url: "https://github.com/Kingpin-Apps/swift-cardano-txbuilder.git", from: "2.0.0"),
+        .package(url: "https://github.com/Kingpin-Apps/swift-cardano-core.git", from: "0.10.2"),
+        .package(url: "https://github.com/Kingpin-Apps/swift-cardano-chain.git", from: "0.16.2"),
+        .package(url: "https://github.com/Kingpin-Apps/swift-cardano-txbuilder.git", from: "2.0.1"),
         .package(url: "https://github.com/attaswift/BigInt.git", "5.7.0"..<"7.0.0"),
         // Keystone's official iOS SDK: Cardano UR sign-request / signature types + URKit + the
         // URRegistryFFI binary target. Powers the air-gapped QR flow.
