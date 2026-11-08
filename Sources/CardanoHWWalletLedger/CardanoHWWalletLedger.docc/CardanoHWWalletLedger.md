@@ -17,7 +17,7 @@ The APDU stream is produced by ``LedgerCardanoSerializer`` and verified against 
 
 Choose a transport:
 
-- ``BleLedgerTransport`` — Ledger's official `hw-transport-ios-ble` SDK (iOS + macOS).
+- ``BleLedgerTransport`` — a vendored, hardened copy of Ledger's `hw-transport-ios-ble` SDK (iOS + macOS).
 - ``HidLedgerTransport`` — IOKit HID + `0x05`/channel framing (macOS).
 
 ```swift
@@ -32,6 +32,7 @@ let witnessSetHex = try await session.sign(request)   // request built with the 
 
 - ``LedgerSignSession``
 - ``LedgerAccountImport``
+- ``LedgerAddressDerivation``
 - ``LedgerNetwork``
 - ``LedgerSigningOptions``
 

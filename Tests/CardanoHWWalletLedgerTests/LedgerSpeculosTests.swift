@@ -185,6 +185,6 @@ struct LedgerSpeculosTests {
         data.append(spend)
         data.append(0x22)
         data.append(stake)
-        return LedgerAPDU.command(ins: LedgerAPDU.INS.deriveAddress, p1: 0x01, p2: 0x00, data: data)
+        return try LedgerAPDU.command(ins: LedgerAPDU.INS.deriveAddress, p1: 0x01, p2: 0x00, data: data)
     }
 }

@@ -48,8 +48,11 @@ public enum LedgerCardanoSerializer {
 
     private static func included(_ flag: Bool) -> UInt8 { flag ? includedYes : includedNo }
 
-    private static func apdu(_ p1: UInt8, _ p2: UInt8, _ data: Data) -> Data {
-        LedgerAPDU.command(ins: LedgerAPDU.INS.signTx, p1: p1, p2: p2, data: data)
+    /// The Cardano Ledger app's maximum address size (`MAX_ADDRESS_SIZE`).
+    static let maxAddressLength = 128
+
+    private static func apdu(_ p1: UInt8, _ p2: UInt8, _ data: Data) throws -> Data {
+        try LedgerAPDU.command(ins: LedgerAPDU.INS.signTx, p1: p1, p2: p2, data: data)
     }
 
     // MARK: - Scope guard
@@ -89,6 +92,9 @@ public enum LedgerCardanoSerializer {
         var out = Data()
         out.append(output.postAlonzo ? 1 : 0)                       // MAP_BABBAGE=1 / ARRAY_LEGACY=0
         let address = output.address.toBytes()
+        guard address.count <= maxAddressLength else {
+            throw LedgerError.app("Output address is \(address.count) bytes; Ledger accepts at most \(maxAddressLength).")
+        }
         out.append(destThirdParty)
         out.append(contentsOf: LedgerBytes.uint32BE(UInt32(address.count)))
         out.append(address)
@@ -233,46 +239,46 @@ public enum LedgerCardanoSerializer {
             tx, witnessPaths: witnessPaths, network: network, options: options,
             certificateCount: certificates.count, withdrawalCount: withdrawals.count
         )
-        var apdus: [Data] = [apdu(LedgerAPDU.SignP1.initTx, LedgerAPDU.p2Unused, initData)]
+        var apdus: [Data] = [try apdu(LedgerAPDU.SignP1.initTx, LedgerAPDU.p2Unused, initData)]
 
         for input in body.inputs.asArray {
-            apdus.append(apdu(LedgerAPDU.SignP1.inputs, LedgerAPDU.p2Unused, inputData(input)))
+            apdus.append(try apdu(LedgerAPDU.SignP1.inputs, LedgerAPDU.p2Unused, inputData(input)))
         }
 
         for output in body.outputs {
             let groups = try HardwareAmounts.canonicalGroups(output.amount.multiAsset)
-            apdus.append(apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputBasic,
+            apdus.append(try apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputBasic,
                               try outputBasicData(output, assetGroupCount: groups.count)))
             for group in groups {
-                apdus.append(apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputAssetGroup,
+                apdus.append(try apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputAssetGroup,
                                   assetGroupData(policyId: group.policyId, tokenCount: group.tokens.count)))
                 for token in group.tokens {
-                    apdus.append(apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputToken,
+                    apdus.append(try apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputToken,
                                       tokenData(name: token.name, amount: token.amount)))
                 }
             }
-            apdus.append(apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputConfirm, Data()))
+            apdus.append(try apdu(LedgerAPDU.SignP1.outputs, LedgerAPDU.SignP2.outputConfirm, Data()))
         }
 
-        apdus.append(apdu(LedgerAPDU.SignP1.fee, LedgerAPDU.p2Unused, Data(LedgerBytes.uint64BE(UInt64(body.fee)))))
+        apdus.append(try apdu(LedgerAPDU.SignP1.fee, LedgerAPDU.p2Unused, Data(LedgerBytes.uint64BE(UInt64(body.fee)))))
         if let ttl = body.ttl {
-            apdus.append(apdu(LedgerAPDU.SignP1.ttl, LedgerAPDU.p2Unused, Data(LedgerBytes.uint64BE(UInt64(ttl)))))
+            apdus.append(try apdu(LedgerAPDU.SignP1.ttl, LedgerAPDU.p2Unused, Data(LedgerBytes.uint64BE(UInt64(ttl)))))
         }
         for certificate in certificates {
-            apdus.append(apdu(LedgerAPDU.SignP1.certificates, LedgerAPDU.p2Unused, try serializeCertificate(certificate)))
+            apdus.append(try apdu(LedgerAPDU.SignP1.certificates, LedgerAPDU.p2Unused, try serializeCertificate(certificate)))
         }
         for withdrawal in withdrawals {
-            apdus.append(apdu(LedgerAPDU.SignP1.withdrawals, LedgerAPDU.p2Unused, try withdrawalData(withdrawal)))
+            apdus.append(try apdu(LedgerAPDU.SignP1.withdrawals, LedgerAPDU.p2Unused, try withdrawalData(withdrawal)))
         }
         if let validityStart = body.validityStart {
-            apdus.append(apdu(LedgerAPDU.SignP1.validityStart, LedgerAPDU.p2Unused, Data(LedgerBytes.uint64BE(UInt64(validityStart)))))
+            apdus.append(try apdu(LedgerAPDU.SignP1.validityStart, LedgerAPDU.p2Unused, Data(LedgerBytes.uint64BE(UInt64(validityStart)))))
         }
 
         // Final review + confirm → returns the 32-byte tx hash.
-        apdus.append(apdu(LedgerAPDU.SignP1.txConfirm, LedgerAPDU.p2Unused, Data()))
+        apdus.append(try apdu(LedgerAPDU.SignP1.txConfirm, LedgerAPDU.p2Unused, Data()))
 
         for path in witnessPaths {
-            apdus.append(apdu(LedgerAPDU.SignP1.witnesses, LedgerAPDU.p2Unused, path.encoded()))
+            apdus.append(try apdu(LedgerAPDU.SignP1.witnesses, LedgerAPDU.p2Unused, try path.encoded()))
         }
         return apdus
     }

@@ -44,9 +44,15 @@ public enum LedgerAPDU {
     public static let extendedPublicKeyLength = 64   // 32-byte key ‖ 32-byte chain code
     public static let txHashLength = 32
 
-    /// Assemble an APDU: `CLA INS P1 P2 Lc data…`. `data` must be ≤ 255 bytes.
-    public static func command(ins: UInt8, p1: UInt8, p2: UInt8, data: Data) -> Data {
-        precondition(data.count <= 255, "Ledger APDU data exceeds 255 bytes")
+    /// The largest APDU data field (`Lc` is one byte).
+    public static let maxDataLength = 255
+
+    /// Assemble an APDU: `CLA INS P1 P2 Lc data…`. Throws if `data` is over 255 bytes, which can
+    /// happen when transaction content (for example a long Byron address) is too large for the device.
+    public static func command(ins: UInt8, p1: UInt8, p2: UInt8, data: Data) throws -> Data {
+        guard data.count <= maxDataLength else {
+            throw LedgerError.app("Ledger APDU data is \(data.count) bytes; the limit is \(maxDataLength).")
+        }
         var apdu = Data([cla, ins, p1, p2, UInt8(data.count)])
         apdu.append(data)
         return apdu
@@ -82,8 +88,14 @@ public struct LedgerBIP32Path: Sendable, Equatable {
 
     public init(indices: [UInt32]) { self.indices = indices }
 
+    /// The most path elements the Cardano Ledger app accepts.
+    public static let maxElements = 10
+
     /// Ledger `path_to_buf`: 1-byte length + 4 bytes (big-endian) per element.
-    public func encoded() -> Data {
+    public func encoded() throws -> Data {
+        guard indices.count <= Self.maxElements else {
+            throw LedgerError.app("BIP32 path has \(indices.count) elements; Ledger accepts at most \(Self.maxElements).")
+        }
         var data = Data([UInt8(indices.count)])
         for element in indices { data.append(contentsOf: LedgerBytes.uint32BE(element)) }
         return data

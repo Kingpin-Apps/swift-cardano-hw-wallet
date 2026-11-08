@@ -36,10 +36,6 @@ let package = Package(
         // same name Apple's swift-collections added in 1.2. Two same-named targets in one graph is a
         // hard SPM error, so hold swift-collections on the 1.1.x line (no `SortedCollections` target).
         .package(url: "https://github.com/apple/swift-collections.git", "1.1.0" ..< "1.2.0"),
-        // Ledger's official BLE transport (from Ledger Live). Zero transitive SPM deps, iOS 13 /
-        // macOS 12. Its `exchange(apdu:)` owns the `0x05`-tag BLE chunking, so the Ledger module only
-        // builds APDUs. Powers `BleLedgerTransport` (iOS + macOS).
-        .package(url: "https://github.com/LedgerHQ/hw-transport-ios-ble.git", from: "1.0.0"),
         // Noise_XX_25519_AESGCM_SHA256 handshake for Trezor's THP (v2) secure channel. Already in the
         // graph (transitive via swift-cardano-core); pinned to the same 4.x line.
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0" ..< "5.0.0"),
@@ -78,13 +74,21 @@ let package = Package(
                 .product(name: "SwiftCardanoCore", package: "swift-cardano-core"),
             ]
         ),
+        // Ledger's BLE transport, vendored from LedgerHQ/hw-transport-ios-ble 1.0.1 (MIT, see
+        // Sources/LedgerBLETransport/LICENSE) with checked frame reassembly, MTU validation and
+        // single-shot exchange callbacks. The upstream SDK trapped on malformed notifications.
+        .target(
+            name: "LedgerBLETransport",
+            exclude: ["LICENSE"],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         .target(
             name: "CardanoHWWalletLedger",
             dependencies: [
                 "CardanoHWKit",
                 // BleTransport is available on iOS + macOS; the USB (`HidLedgerTransport`) path is
                 // `#if os(macOS)`-guarded inside the source.
-                .product(name: "BleTransport", package: "hw-transport-ios-ble"),
+                "LedgerBLETransport",
             ]
         ),
         .target(
@@ -101,6 +105,7 @@ let package = Package(
             name: "CardanoHWWalletLedgerTests",
             dependencies: [
                 "CardanoHWWalletLedger",
+                "LedgerBLETransport",
                 .product(name: "SwiftCardanoCore", package: "swift-cardano-core"),
             ]
         ),

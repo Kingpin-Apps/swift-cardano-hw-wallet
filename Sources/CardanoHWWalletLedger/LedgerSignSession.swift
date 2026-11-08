@@ -145,3 +145,27 @@ public actor LedgerSignSession: HardwareSigner {
         return try derivation.paymentVerificationKey(role: role, index: index).payload
     }
 }
+
+extension LedgerSignSession: HardwareAddressVerifier {
+    /// Derives the base address on the Ledger, checks it equals `expectedAddress`, then asks the
+    /// device to display it so the user can confirm it matches the app.
+    public func verifyAddress(_ expectedAddress: String, account: HardwareAccountModel, role: UInt32 = 0, index: UInt32 = 0, stakeIndex: UInt32 = 0) async throws {
+        let spending = "\(account.accountPath)/\(role)/\(index)"
+        let staking = "\(account.accountPath)/2/\(stakeIndex)"
+        let returned = try await transport.exchange(LedgerAddressDerivation.apdu(
+            p1: LedgerAddressDerivation.p1Return, networkId: network.networkId, spendingPath: spending, stakingPath: staking
+        ))
+        let deviceAddress: String
+        do {
+            deviceAddress = try Address(from: .bytes(returned)).toBech32()
+        } catch {
+            throw LedgerError.malformedResponse("Ledger returned an undecodable address: \(error)")
+        }
+        guard deviceAddress == expectedAddress else {
+            throw HardwareWalletError.addressMismatch(expected: expectedAddress, device: deviceAddress)
+        }
+        _ = try await transport.exchange(LedgerAddressDerivation.apdu(
+            p1: LedgerAddressDerivation.p1Display, networkId: network.networkId, spendingPath: spending, stakingPath: staking
+        ))
+    }
+}

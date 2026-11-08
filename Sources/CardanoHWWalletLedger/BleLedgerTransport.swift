@@ -2,9 +2,9 @@ import Foundation
 // BleTransport predates Swift-6 concurrency annotations (its `.shared` singleton and protocol aren't
 // Sendable-annotated); `@preconcurrency` downgrades those to warnings. The SDK is internally
 // thread-safe, so `BleLedgerTransport` is `@unchecked Sendable`.
-@preconcurrency import BleTransport
+@preconcurrency import LedgerBLETransport
 
-/// A ``LedgerTransport`` over Bluetooth, wrapping Ledger's official `BleTransport` SDK. The SDK owns
+/// A ``LedgerTransport`` over Bluetooth, wrapping the vendored Ledger BLE SDK (`LedgerBLETransport`). The SDK owns
 /// the `0x05`-tag BLE framing and MTU handling; we hand it whole APDUs and it returns the full
 /// response hex (payload ‖ 2-byte status word). We check the status word and return just the payload.
 ///
@@ -53,6 +53,11 @@ public enum LedgerBLE {
     }
 
     /// Scan and connect to the first discovered Ledger, returning a ready transport.
+    ///
+    /// Any nearby peripheral advertising the Ledger service can win this race. Prefer ``scan(duration:onUpdate:onStopped:)``
+    /// plus ``connect(to:)`` with a device the user picked, and confirm the first receive address on the
+    /// device with ``LedgerSignSession/verifyAddress(_:account:role:index:stakeIndex:)`` after import.
+    @available(*, deprecated, message: "Let the user pick a device from scan(...) and use connect(to:); verify an address on the device after import.")
     public static func connectFirst(scanDuration: TimeInterval = 5) async throws -> BleLedgerTransport {
         _ = try await BleTransport.shared.create(scanDuration: scanDuration, disconnectedCallback: nil)
         return BleLedgerTransport()

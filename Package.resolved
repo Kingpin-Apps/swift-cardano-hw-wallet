@@ -1,5 +1,5 @@
 {
-  "originHash" : "acac72172e7da65d887a55bfca9a7993bb207cd8f178491abe532e1b10a9e0b6",
+  "originHash" : "4ea86e494d5bfd4dd9b0e998fc579f823ddf148cc4f3520a23513fcb59ccdf65",
   "pins" : [
     {
       "identity" : "base32",
@@ -89,15 +89,6 @@
       "state" : {
         "revision" : "83f5cdb2f8b4c7b57ed9419c6f4f6380b683500e",
         "version" : "2.5.0"
-      }
-    },
-    {
-      "identity" : "hw-transport-ios-ble",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/LedgerHQ/hw-transport-ios-ble.git",
-      "state" : {
-        "revision" : "4df8fff21c1738a1dff4d2ee19175dd3263d6c5f",
-        "version" : "1.0.1"
       }
     },
     {
