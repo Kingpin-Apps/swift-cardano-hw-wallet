@@ -61,6 +61,7 @@ across all device families.
 ### Device seams
 
 - ``HardwareSigner``
+- ``HardwareAddressVerifier``
 - ``HardwarePacketLink``
 - ``HardwareSignSession``
 

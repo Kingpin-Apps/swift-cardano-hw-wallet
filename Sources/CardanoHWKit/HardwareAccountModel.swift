@@ -8,6 +8,8 @@ public enum HardwareWalletError: Error, Sendable, Equatable {
     case witnessDecodeFailed(String)
     case buildFailed(String)
     case invalidRequest(String)
+    /// The device derived a different address than the one computed from the imported account key.
+    case addressMismatch(expected: String, device: String)
 }
 
 /// A device-neutral account import product: the account-level extended public key exported by a
