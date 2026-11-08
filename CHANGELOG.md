@@ -1,3 +1,16 @@
+## 0.3.0 (2026-11-08)
+
+### Feat
+
+- **core**: add HardwareAddressVerifier for on-device address confirmation
+
+### Fix
+
+- **keystone**: screen QR fountain headers before they reach URKit
+- **ledger**: throw on oversized APDUs and vendor a hardened BLE transport
+- **trezor**: reject malformed device messages and allow pinning the THP device key
+- **hid**: free the report buffer only after the reader stops and refuse to guess between devices
+
 ## 0.2.6 (2026-11-07)
 
 ## 0.2.5 (2026-11-07)
