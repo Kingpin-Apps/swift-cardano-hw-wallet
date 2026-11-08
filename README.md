@@ -29,7 +29,8 @@ wallet never touches a private key.
   [swift-cardano-core](https://github.com/Kingpin-Apps/swift-cardano-core),
   [swift-cardano-chain](https://github.com/Kingpin-Apps/swift-cardano-chain), and
   [swift-cardano-txbuilder](https://github.com/Kingpin-Apps/swift-cardano-txbuilder); Ledger BLE uses
-  Ledger's official `hw-transport-ios-ble`, Keystone uses `keystone-sdk-ios`. Strict-concurrency clean.
+  a vendored, hardened copy of Ledger's `hw-transport-ios-ble` (MIT), Keystone uses `keystone-sdk-ios`.
+  Strict-concurrency clean.
 
 ## Platform matrix
 
@@ -90,8 +91,8 @@ Tools/sandbox-probe/run.sh trezor   # Trezor One over USB
   unit-testable. `PublicHDDerivation`, `UnsignedTxBuilder`, `WitnessMerge`, `HardwareAccountModel`,
   `HardwareSignRequest`, and the `HardwareSigner` / `HardwarePacketLink` / `HardwareSignSession` seams.
 - **`CardanoHWWalletLedger`** — Ledger over the real `app-cardano` per-field staged APDU protocol.
-  `LedgerSignSession` (a `HardwareSigner`), `LedgerAccountImport`, `BleLedgerTransport` (official
-  `hw-transport-ios-ble`), and `HidLedgerTransport` (IOKit HID, macOS).
+  `LedgerSignSession` (a `HardwareSigner`), `LedgerAccountImport`, `BleLedgerTransport` (vendored
+  `hw-transport-ios-ble` in the `LedgerBLETransport` target), and `HidLedgerTransport` (IOKit HID, macOS).
 - **`CardanoHWWalletTrezor`** — Trezor over a self-contained proto2 codec. `TrezorSignSession`,
   `TrezorAccountImport`, `TrezorHIDPacketLink` (IOKit HID, macOS), plus the encrypted **THP** (v2 /
   Noise) channel (`TrezorTHPSession`).
@@ -206,6 +207,23 @@ case .incomplete: break
 `UnsignedTxBuilder` accepts `certificates` / `withdrawals` — so stake delegation, Conway
 registration/deregistration, vote delegation, reward withdrawals, and native-asset (token) sends work
 across all three device families through the same request.
+
+## Device trust
+
+A hardware wallet protects keys, but the host still has to know it is talking to the right device.
+
+- **Confirm addresses on the device.** Account import trusts the extended public key the transport
+  returns. After import, call `verifyAddress(_:account:role:index:stakeIndex:)` on `LedgerSignSession`
+  or `TrezorSignSession` (both conform to `HardwareAddressVerifier`) for the first receive address,
+  and before showing any address the user will share. It throws `HardwareWalletError.addressMismatch`
+  when the device derives a different address, and shows the address on the device screen.
+- **Pick the device.** Prefer `LedgerBLE.scan` plus `connect(to:)` with a peripheral the user chose
+  (`connectFirst` is deprecated). For USB, `USBHIDDevice.connectedDevices(vendorID:usagePage:)` lists
+  attached devices; `open()` refuses to guess when more than one matches and no `locationID` is given.
+- **Trezor THP.** Without a `DeviceKeyVerifier`, `TrezorTHPSession` encrypts the channel but does not
+  authenticate the device. Pass `.pinned(deviceStaticKey)` to fail closed on any other device;
+  `deviceAuthenticated` and `handshakeState` report the result. The pairing and credential phases
+  are not implemented yet.
 
 ## Verification
 
