@@ -33,6 +33,34 @@ struct TrezorEmulatorSignTests {
         #expect(account.accountXPub.toHex == "d507c8f866691bd96e131334c355188b1a1d0b2fa0ab11545075aab332d77d9eb19657ad13ee581b56b0f8d744d66ca356b93d42fe176b3de007d53e9c4c4e7a")
     }
 
+    @Test("verifyAddress: the firmware derives and displays the same base address", .enabled(if: emulatorEnabled))
+    func liveVerifyAddress() async throws {
+        let bridge = TrezorEmulatorBridge()
+        let session = TrezorSignSession(transport: bridge, network: .mainnet, options: Self.options)
+        let account = try await session.importAccount(network: .mainnet, accountIndex: 0)
+        let derivation = try PublicHDDerivation(account: account)
+        let expected = try derivation.address(role: 0, index: 0)
+        #expect(expected == "addr1qxq0nckg3ekgzuqg7w5p9mvgnd9ym28qh5grlph8xd2z92sj922xhxkn6twlq2wn4q50q352annk3903tj00h45mgfmsl3s9zt")
+        // show_display = true: the bridge presses "yes" on the emulated screen.
+        try await session.verifyAddress(expected, account: account, role: 0, index: 0, stakeIndex: 0)
+        try await session.verifyAddress(try derivation.address(role: 1, index: 3), account: account, role: 1, index: 3, stakeIndex: 0)
+        await bridge.release()
+    }
+
+    @Test("verifyAddress: a substituted expected address is caught by the firmware result", .enabled(if: emulatorEnabled))
+    func liveVerifyAddressMismatch() async throws {
+        let bridge = TrezorEmulatorBridge()
+        let session = TrezorSignSession(transport: bridge, network: .mainnet, options: Self.options)
+        let account = try await session.importAccount(network: .mainnet, accountIndex: 0)
+        let derivation = try PublicHDDerivation(account: account)
+        let wrong = try derivation.address(role: 0, index: 1)
+        let device = try derivation.address(role: 0, index: 0)
+        await #expect(throws: HardwareWalletError.addressMismatch(expected: wrong, device: device)) {
+            try await session.verifyAddress(wrong, account: account, role: 0, index: 0, stakeIndex: 0)
+        }
+        await bridge.release()
+    }
+
     @Test("sign() drives the full dialogue and the device witness verifies", .enabled(if: emulatorEnabled))
     func liveSign() async throws {
         let bridge = TrezorEmulatorBridge()

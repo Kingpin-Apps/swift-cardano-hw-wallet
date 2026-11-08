@@ -56,6 +56,32 @@ struct LedgerSpeculosTests {
         #expect(try Address.fromBech32(derived).toBytes() == deviceAddress)
     }
 
+    @Test("verifyAddress: the firmware derives and displays the same base address", .enabled(if: emulatorEnabled))
+    func liveVerifyAddress() async throws {
+        let transport = LedgerSpeculosTransport()
+        let session = LedgerSignSession(transport: transport, network: .mainnet)
+        let account = try await session.importAccount(network: .mainnet, accountIndex: 0)
+        let derivation = try PublicHDDerivation(account: account)
+        // RETURN then DISPLAY (approved on the emulated screen by the transport).
+        try await session.verifyAddress(try derivation.address(role: 0, index: 0), account: account, role: 0, index: 0, stakeIndex: 0)
+        try await session.verifyAddress(try derivation.address(role: 1, index: 3), account: account, role: 1, index: 3, stakeIndex: 0)
+        transport.close()
+    }
+
+    @Test("verifyAddress: a substituted expected address is caught by the firmware result", .enabled(if: emulatorEnabled))
+    func liveVerifyAddressMismatch() async throws {
+        let transport = LedgerSpeculosTransport()
+        let session = LedgerSignSession(transport: transport, network: .mainnet)
+        let account = try await session.importAccount(network: .mainnet, accountIndex: 0)
+        let derivation = try PublicHDDerivation(account: account)
+        let wrong = try derivation.address(role: 0, index: 1)
+        let device = try derivation.address(role: 0, index: 0)
+        await #expect(throws: HardwareWalletError.addressMismatch(expected: wrong, device: device)) {
+            try await session.verifyAddress(wrong, account: account, role: 0, index: 0, stakeIndex: 0)
+        }
+        transport.close()
+    }
+
     @Test("sign() drives the staged dialogue and the device witness verifies", .enabled(if: emulatorEnabled))
     func liveSign() async throws {
         let transport = LedgerSpeculosTransport()
