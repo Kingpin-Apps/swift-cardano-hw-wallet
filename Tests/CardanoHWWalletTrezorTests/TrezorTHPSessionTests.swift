@@ -71,7 +71,14 @@ actor THPDeviceResponder {
     private var sendCipher: NoiseCipherState?
     private var recvCipher: NoiseCipherState?
 
-    init(link: PairedPacketLink) { self.link = link }
+    private let staticKey: Curve25519.KeyAgreement.PrivateKey
+    private let completionState: UInt8
+
+    init(link: PairedPacketLink, staticKey: Curve25519.KeyAgreement.PrivateKey = .init(), completionState: UInt8 = 0x00) {
+        self.link = link
+        self.staticKey = staticKey
+        self.completionState = completionState
+    }
 
     func run(channel cid: UInt16) async throws {
         channel = cid
@@ -91,7 +98,7 @@ actor THPDeviceResponder {
     }
 
     private func handshake() async throws {
-        let noise = NoiseXXHandshake(role: .responder, staticKey: Curve25519.KeyAgreement.PrivateKey())
+        let noise = NoiseXXHandshake(role: .responder, staticKey: staticKey)
         _ = try noise.readMessage1(try await readData().payload)                  // -> e
         try await sendData(control: TrezorTHP.Control.handshakeInitResponse, payload: try noise.writeMessage2(payload: Data()))  // <- e, ee, s, es
         let (_, send, receive) = try noise.readMessage3(try await readData().payload)  // -> s, se
@@ -99,7 +106,7 @@ actor THPDeviceResponder {
         recvCipher = receive
         // Completion response: encrypted device state, sent with the device's send cipher.
         var s = send
-        let stateCiphertext = try s.encrypt(plaintext: Data([0x00]))
+        let stateCiphertext = try s.encrypt(plaintext: Data([completionState]))
         sendCipher = s
         try await sendData(control: TrezorTHP.Control.handshakeCompletionResponse, payload: stateCiphertext)
     }

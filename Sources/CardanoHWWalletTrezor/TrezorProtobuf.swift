@@ -79,15 +79,20 @@ struct ProtobufReader {
             case ProtobufWire.varint:
                 fields.append(Field(number: number, wire: wire, varint: try readVarint(), bytes: Data()))
             case ProtobufWire.lengthDelimited:
-                let len = Int(try readVarint())
-                guard data.distance(from: idx, to: data.endIndex) >= len else {
+                // Compare while still UInt64: a device-chosen length can exceed Int.max.
+                let raw = try readVarint()
+                guard raw <= UInt64(data.distance(from: idx, to: data.endIndex)) else {
                     throw TrezorError.malformedResponse("Protobuf length-delimited field overruns the buffer.")
                 }
-                let end = data.index(idx, offsetBy: len)
+                let end = data.index(idx, offsetBy: Int(raw))
                 fields.append(Field(number: number, wire: wire, varint: 0, bytes: data[idx..<end]))
                 idx = end
-            case 5: idx = data.index(idx, offsetBy: 4)   // fixed32 (skip; unused)
-            case 1: idx = data.index(idx, offsetBy: 8)   // fixed64 (skip; unused)
+            case 5, 1:   // fixed32 / fixed64 (skip; unused)
+                let width = wire == 5 ? 4 : 8
+                guard data.distance(from: idx, to: data.endIndex) >= width else {
+                    throw TrezorError.malformedResponse("Truncated protobuf fixed\(width * 8) field.")
+                }
+                idx = data.index(idx, offsetBy: width)
             default:
                 throw TrezorError.malformedResponse("Unsupported protobuf wire type \(wire).")
             }
@@ -97,4 +102,13 @@ struct ProtobufReader {
     func varint(_ field: Int) -> UInt64? { fields.first { $0.number == field }?.varint }
     func bytes(_ field: Int) -> Data? { fields.first { $0.number == field && $0.wire == ProtobufWire.lengthDelimited }?.bytes }
     func string(_ field: Int) -> String? { bytes(field).flatMap { String(data: $0, encoding: .utf8) } }
+}
+
+extension TrezorError {
+    /// Decodes a device `Failure` payload into a thrown error. The code is clamped
+    /// because the device controls it and may send any 64-bit value.
+    static func fromFailurePayload(_ payload: Data) throws -> TrezorError {
+        let reader = try ProtobufReader(payload)
+        return .failure(code: Int(clamping: reader.varint(1) ?? 0), message: reader.string(2) ?? "")
+    }
 }

@@ -100,6 +100,8 @@ public enum TrezorTHP {
                 control = ctrl
                 channel = (UInt16(bytes[1]) << 8) | UInt16(bytes[2])
                 let length = Int((UInt16(bytes[3]) << 8) | UInt16(bytes[4]))
+                // The declared length covers the payload plus a 4-byte CRC.
+                guard length >= 4 else { throw TrezorError.malformedResponse("THP length shorter than its CRC") }
                 expectedLength = length
                 header = Data(bytes[0..<5])
                 body = Data(bytes[5...])

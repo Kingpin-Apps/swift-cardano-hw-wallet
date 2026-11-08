@@ -7,6 +7,8 @@ public enum TrezorMessageType {
     public static let failure: UInt16 = 3
     public static let cardanoGetPublicKey: UInt16 = 305
     public static let cardanoPublicKey: UInt16 = 306
+    public static let cardanoGetAddress: UInt16 = 307
+    public static let cardanoAddress: UInt16 = 308
     public static let cardanoTxItemAck: UInt16 = 313
     public static let cardanoTxWitnessRequest: UInt16 = 315
     public static let cardanoTxWitnessResponse: UInt16 = 316

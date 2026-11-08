@@ -62,6 +62,36 @@ public enum TrezorAccountImport {
     }
 }
 
+/// Pure helpers for `CardanoGetAddress` → `CardanoAddress` for a base address (payment key + stake key).
+public enum TrezorAddressDerivation {
+    /// `CardanoGetAddress`: show_display (2), protocol_magic (3), network_id (4),
+    /// address_parameters (5: address_type BASE = 0, address_n, address_n_staking), derivation_type (6).
+    public static func getAddressMessage(
+        spendingPath: String, stakingPath: String, network: TrezorNetwork,
+        derivationType: TrezorDerivationType, showDisplay: Bool
+    ) throws -> TrezorMessage {
+        var params = ProtobufWriter()
+        params.varint(1, 0)                                            // address_type = BASE
+        params.repeatedUInt32(2, try TrezorBIP32Path.parse(spendingPath))
+        params.repeatedUInt32(3, try TrezorBIP32Path.parse(stakingPath))
+        var w = ProtobufWriter()
+        w.bool(2, showDisplay)
+        w.varint(3, UInt64(network.protocolMagic))
+        w.varint(4, UInt64(network.networkId))
+        w.bytes(5, params.data)
+        w.varint(6, derivationType.rawValue)
+        return TrezorMessage(type: TrezorMessageType.cardanoGetAddress, payload: w.data)
+    }
+
+    /// The bech32 address from a `CardanoAddress` payload (field 1).
+    public static func parseAddress(payload: Data) throws -> String {
+        guard let address = try ProtobufReader(payload).string(1), !address.isEmpty else {
+            throw TrezorError.malformedResponse("CardanoAddress missing its address field.")
+        }
+        return address
+    }
+}
+
 extension Data {
     /// Decode a hex string (even length, no `0x`) into bytes. Returns nil on malformed input.
     init?(hexString: String) {

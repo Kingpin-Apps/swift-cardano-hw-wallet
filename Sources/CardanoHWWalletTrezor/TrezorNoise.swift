@@ -96,6 +96,9 @@ public final class NoiseXXHandshake {
     /// The remote static public key learned during the handshake (Trezor's masked static key).
     public var remoteStaticKey: Data? { rs }
 
+    /// The remote ephemeral public key learned during the handshake.
+    public var remoteEphemeralKey: Data? { re }
+
     // MARK: - Message 1 (`-> e`)
 
     /// Initiator writes message 1: `host_ephemeral_pubkey ‖ payload`.

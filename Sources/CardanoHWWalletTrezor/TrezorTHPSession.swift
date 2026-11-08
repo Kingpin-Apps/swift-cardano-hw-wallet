@@ -17,10 +17,52 @@ import CardanoHWKit
 /// the handshake and the first app message on a real device — that choreography needs a physical
 /// newest-firmware Trezor. This session uses `session_id 0` and assumes a trusted (already-paired or
 /// SkipPairing) device.
+///
+/// **Device authentication.** By default the handshake accepts whatever static key the responder
+/// presents, so the channel is confidential against passive observers but does *not* prove the peer
+/// is a genuine or previously paired Trezor. Pass a ``DeviceKeyVerifier`` (for example
+/// ``DeviceKeyVerifier/pinned(_:)`` with the device static key learned during pairing) to make
+/// ``open()`` fail closed before any application message is sent when the device key does not match.
+/// ``deviceAuthenticated`` and ``handshakeState`` report what the handshake established.
 public actor TrezorTHPSession: TrezorTransport {
+    /// Decides whether the device static key presented in handshake message 2 is acceptable.
+    public struct DeviceKeyVerifier: Sendable {
+        /// Called with `(maskedStaticKey, deviceEphemeralKey)`, both 32-byte X25519 public keys.
+        public let accepts: @Sendable (_ maskedStaticKey: Data, _ deviceEphemeralKey: Data) -> Bool
+
+        public init(_ accepts: @escaping @Sendable (_ maskedStaticKey: Data, _ deviceEphemeralKey: Data) -> Bool) {
+            self.accepts = accepts
+        }
+
+        /// Accepts only the device whose (unmasked) THP static public key is `deviceStaticKey`.
+        /// The device sends `X25519(SHA-256(static ‖ ephemeral), static)`; this recomputes that
+        /// mask from the pinned key and the handshake's device ephemeral key and compares.
+        public static func pinned(_ deviceStaticKey: Data) -> DeviceKeyVerifier {
+            DeviceKeyVerifier { masked, ephemeral in
+                guard let expected = try? TrezorTHPSession.maskedStaticKey(deviceStaticKey, deviceEphemeralKey: ephemeral) else {
+                    return false
+                }
+                return expected == masked
+            }
+        }
+    }
+
+    /// `X25519(SHA-256(staticKey ‖ ephemeralKey), staticKey)` — the masked device static key THP sends.
+    public static func maskedStaticKey(_ staticKey: Data, deviceEphemeralKey: Data) throws -> Data {
+        let scalar = Data(SHA256.hash(data: staticKey + deviceEphemeralKey))
+        return try NoiseCrypto.dh(try Curve25519.KeyAgreement.PrivateKey(rawRepresentation: scalar), staticKey)
+    }
+
     private let link: HardwarePacketLink
     private let hostStatic: Curve25519.KeyAgreement.PrivateKey
     private let sessionId: UInt8
+    private let deviceKeyVerifier: DeviceKeyVerifier?
+
+    /// `true` once a ``DeviceKeyVerifier`` accepted the device static key during ``open()``.
+    public private(set) var deviceAuthenticated = false
+    /// The decrypted handshake-completion state byte from the device (THP: 0 unpaired, 1 paired,
+    /// 2 paired with autoconnect), or `nil` before ``open()``.
+    public private(set) var handshakeState: UInt8?
 
     private var channel: UInt16 = 0
     private var sendCipher: NoiseCipherState?
@@ -28,10 +70,20 @@ public actor TrezorTHPSession: TrezorTransport {
     private var hostSeq = 0
     private var opened = false
 
-    public init(link: HardwarePacketLink, sessionId: UInt8 = 0) {
+    /// - Parameters:
+    ///   - hostStaticKey: The host's Noise static key. Pass a persisted key to keep the same host
+    ///     identity across sessions (needed once pairing credentials are used).
+    ///   - deviceKeyVerifier: When set, ``open()`` throws unless it accepts the device static key.
+    public init(
+        link: HardwarePacketLink,
+        sessionId: UInt8 = 0,
+        hostStaticKey: Curve25519.KeyAgreement.PrivateKey = Curve25519.KeyAgreement.PrivateKey(),
+        deviceKeyVerifier: DeviceKeyVerifier? = nil
+    ) {
         self.link = link
-        self.hostStatic = Curve25519.KeyAgreement.PrivateKey()
+        self.hostStatic = hostStaticKey
         self.sessionId = sessionId
+        self.deviceKeyVerifier = deviceKeyVerifier
     }
 
     // MARK: - TrezorTransport
@@ -66,8 +118,7 @@ public actor TrezorTHPSession: TrezorTransport {
         let type = (UInt16(bytes[1]) << 8) | UInt16(bytes[2])
         let payload = Data(bytes[3...])
         if type == TrezorMessageType.failure {
-            let reader = try ProtobufReader(payload)
-            throw TrezorError.failure(code: Int(reader.varint(1) ?? 0), message: reader.string(2) ?? "")
+            throw try TrezorError.fromFailurePayload(payload)
         }
         return (type, payload)
     }
@@ -99,6 +150,13 @@ public actor TrezorTHPSession: TrezorTransport {
         try await sendData(control: TrezorTHP.Control.handshakeInitRequest, payload: try noise.writeMessage1(payload: Data([0x00])))
         // <- e, ee, s, es
         _ = try noise.readMessage2(try await readData().payload)
+        if let deviceKeyVerifier {
+            guard let masked = noise.remoteStaticKey, let ephemeral = noise.remoteEphemeralKey,
+                  deviceKeyVerifier.accepts(masked, ephemeral) else {
+                throw TrezorError.transport("THP device static key does not match the expected Trezor.")
+            }
+            deviceAuthenticated = true
+        }
         // -> s, se   (empty ThpHandshakeCompletionReqNoisePayload = no pairing credential)
         let (msg3, send, receive) = try noise.writeMessage3(payload: Data())
         try await sendData(control: TrezorTHP.Control.handshakeCompletionRequest, payload: msg3)
@@ -107,8 +165,9 @@ public actor TrezorTHPSession: TrezorTransport {
 
         // Handshake completion response: encrypted trezor state, decrypted with the receive cipher.
         var r = receive
-        _ = try r.decrypt(ciphertext: try await readData().payload)
+        let state = try r.decrypt(ciphertext: try await readData().payload)
         recvCipher = r
+        handshakeState = state.first
     }
 
     // MARK: - ABP data send / receive

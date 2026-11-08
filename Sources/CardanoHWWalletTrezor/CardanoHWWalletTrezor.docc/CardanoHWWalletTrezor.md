@@ -38,6 +38,7 @@ let witnessSetHex = try await session.sign(request)
 
 - ``TrezorSignSession``
 - ``TrezorAccountImport``
+- ``TrezorAddressDerivation``
 - ``TrezorNetwork``
 - ``TrezorSigningOptions``
 - ``TrezorDerivationType``

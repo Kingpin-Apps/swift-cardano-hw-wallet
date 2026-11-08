@@ -146,3 +146,24 @@ public actor TrezorSignSession: HardwareSigner {
         }
     }
 }
+
+extension TrezorSignSession: HardwareAddressVerifier {
+    /// Asks the Trezor to derive and display the base address, and checks it equals `expectedAddress`.
+    /// The device shows the address while it answers, so the user confirms it on the device screen.
+    public func verifyAddress(_ expectedAddress: String, account: HardwareAccountModel, role: UInt32 = 0, index: UInt32 = 0, stakeIndex: UInt32 = 0) async throws {
+        try await transport.open()
+        let message = try TrezorAddressDerivation.getAddressMessage(
+            spendingPath: "\(account.accountPath)/\(role)/\(index)",
+            stakingPath: "\(account.accountPath)/2/\(stakeIndex)",
+            network: network, derivationType: options.derivationType, showDisplay: true
+        )
+        let response = try await transport.exchange(message)
+        guard response.type == TrezorMessageType.cardanoAddress else {
+            throw TrezorError.malformedResponse("Expected CardanoAddress, got message type \(response.type).")
+        }
+        let deviceAddress = try TrezorAddressDerivation.parseAddress(payload: response.payload)
+        guard deviceAddress == expectedAddress else {
+            throw HardwareWalletError.addressMismatch(expected: expectedAddress, device: deviceAddress)
+        }
+    }
+}

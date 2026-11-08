@@ -30,8 +30,7 @@ public final class TrezorV1Transport: TrezorTransport {
             let report = try await link.read()
             if let (type, payload) = try decoder.push(report) {
                 if type == TrezorMessageType.failure {
-                    let reader = try ProtobufReader(payload)
-                    throw TrezorError.failure(code: Int(reader.varint(1) ?? 0), message: reader.string(2) ?? "")
+                    throw try TrezorError.fromFailurePayload(payload)
                 }
                 return (type, payload)
             }
