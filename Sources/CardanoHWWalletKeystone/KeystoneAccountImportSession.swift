@@ -23,6 +23,7 @@ public final class KeystoneAccountImportSession {
     public func ingest(scanned: String) throws -> HardwareAccountModel? {
         let result: DecodeResult
         do {
+            try KeystoneQRFrameGuard.validate(scanned)
             result = try sdk.decodeQR(qrCode: scanned)
         } catch {
             throw HardwareWalletError.invalidAccountKey("Could not decode the scanned QR: \(error)")

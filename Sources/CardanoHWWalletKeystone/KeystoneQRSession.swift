@@ -36,6 +36,7 @@ public final class KeystoneQRSession: HardwareSignSession {
     public func ingest(scanned: String) throws -> SignIngestResult {
         let result: DecodeResult
         do {
+            try KeystoneQRFrameGuard.validate(scanned)
             result = try sdk.decodeQR(qrCode: scanned)
         } catch {
             throw HardwareWalletError.witnessDecodeFailed("Could not decode the scanned QR frame: \(error)")
