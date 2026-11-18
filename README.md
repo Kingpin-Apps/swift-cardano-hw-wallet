@@ -217,13 +217,22 @@ A hardware wallet protects keys, but the host still has to know it is talking to
   or `TrezorSignSession` (both conform to `HardwareAddressVerifier`) for the first receive address,
   and before showing any address the user will share. It throws `HardwareWalletError.addressMismatch`
   when the device derives a different address, and shows the address on the device screen.
-- **Pick the device.** Prefer `LedgerBLE.scan` plus `connect(to:)` with a peripheral the user chose
+- **Pick the device.** Prefer `LedgerBLE.scanDevices` plus `connect(toDevice:)` (or `scan` plus
+  `connect(to:)`) with a device the user chose
   (`connectFirst` is deprecated). For USB, `USBHIDDevice.connectedDevices(vendorID:usagePage:)` lists
   attached devices; `open()` refuses to guess when more than one matches and no `locationID` is given.
-- **Trezor THP.** Without a `DeviceKeyVerifier`, `TrezorTHPSession` encrypts the channel but does not
-  authenticate the device. Pass `.pinned(deviceStaticKey)` to fail closed on any other device;
-  `deviceAuthenticated` and `handshakeState` report the result. The pairing and credential phases
-  are not implemented yet.
+- **Trezor THP.** `TrezorTHPSession` runs the full connection process: channel allocation, the Noise
+  XX handshake (with the device properties as prologue), **Code Entry pairing** for an unpaired Trezor
+  (pass a `TrezorTHPPairingHandler` that asks the user for the 6-digit code; CPace with Elligator2,
+  checked against Trezor's firmware vectors), the credential phase (pass a `TrezorTHPCredentialStore`
+  so later connections skip pairing), and `ThpCreateNewSession { derive_cardano }`. Without a pairing
+  handler an unpaired Trezor throws `TrezorError.pairingRequired`. `deviceAuthenticated` is true after
+  pairing, after a stored-credential match, or when a `DeviceKeyVerifier` (e.g. `.pinned(key)`)
+  accepts the device key. QR and NFC pairing are not implemented (current firmware offers only code
+  entry). Not yet run against a physical THP Trezor.
+- **Confirmations on the device.** Both Trezor transports answer `ButtonRequest` with `ButtonAck`
+  and call `onButtonRequest`, so apps can show "Confirm on your Trezor". The Codec-v1 transport sends
+  `Initialize { derive_cardano = true }` on open.
 
 ## Verification
 

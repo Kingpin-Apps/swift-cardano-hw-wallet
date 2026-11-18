@@ -32,6 +32,17 @@ public final class BleLedgerTransport: LedgerTransport {
     }
 }
 
+/// A Ledger found over Bluetooth: its peripheral id (stable on this host) and advertised name.
+public struct LedgerBLEDevice: Swift.Sendable, Hashable, Identifiable {
+    public let id: UUID
+    public let name: String
+
+    public init(id: UUID, name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
 /// Bluetooth connection helpers for Ledger devices, exposed for the app's connect UI. Thin wrappers
 /// over the SDK singleton so the app doesn't import `BleTransport` directly.
 public enum LedgerBLE {
@@ -67,6 +78,25 @@ public enum LedgerBLE {
     public static func connect(to peripheral: PeripheralIdentifier) async throws -> BleLedgerTransport {
         _ = try await BleTransport.shared.connect(toPeripheralID: peripheral, disconnectedCallback: nil)
         return BleLedgerTransport()
+    }
+
+    /// ``scan(duration:onUpdate:onStopped:)`` reporting ``LedgerBLEDevice`` values, which apps can
+    /// store and show without importing the Bluetooth module.
+    public static func scanDevices(
+        duration: TimeInterval = 5,
+        onUpdate: @escaping @Sendable ([LedgerBLEDevice]) -> Void,
+        onStopped: @escaping @Sendable (_ errorDescription: String?) -> Void
+    ) {
+        scan(
+            duration: duration,
+            onUpdate: { peripherals in onUpdate(peripherals.map { LedgerBLEDevice(id: $0.uuid, name: $0.name) }) },
+            onStopped: { error in onStopped(error.map { String(describing: $0) }) }
+        )
+    }
+
+    /// Connect to a device the user picked from ``scanDevices(duration:onUpdate:onStopped:)``.
+    public static func connect(toDevice device: LedgerBLEDevice) async throws -> BleLedgerTransport {
+        try await connect(to: PeripheralIdentifier(uuid: device.id, name: device.name))
     }
 
     /// Ask the device to open the Cardano app (no-op if already open).
