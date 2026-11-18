@@ -14,14 +14,42 @@ public protocol TrezorTransport: Sendable {
 
 /// The legacy Trezor **Codec v1** transport: `##`+type+len framing over 64-byte HID reports on a
 /// ``HardwarePacketLink``. Unencrypted; used by pre-THP firmware.
+///
+/// ``open()`` sends `Initialize { derive_cardano = true }` (the firmware refuses Cardano calls
+/// without it), and ``exchange(_:)`` answers the device's `ButtonRequest`s with `ButtonAck` while
+/// the user confirms on the device, calling `onButtonRequest` each time so the app can say so.
 public final class TrezorV1Transport: TrezorTransport {
     private let link: HardwarePacketLink
+    private let onButtonRequest: (@Sendable () -> Void)?
 
-    public init(link: HardwarePacketLink) { self.link = link }
+    public init(link: HardwarePacketLink, onButtonRequest: (@Sendable () -> Void)? = nil) {
+        self.link = link
+        self.onButtonRequest = onButtonRequest
+    }
 
-    public func open() async throws { try await link.open() }
+    public func open() async throws {
+        try await link.open()
+        var initialize = ProtobufWriter()
+        initialize.bool(3, true)   // derive_cardano
+        let response = try await exchange(TrezorMessage(type: TrezorMessageType.initialize, payload: initialize.data))
+        guard response.type == TrezorMessageType.features else {
+            throw TrezorError.unexpectedMessage(type: response.type)
+        }
+    }
 
     public func exchange(_ message: TrezorMessage) async throws -> (type: UInt16, payload: Data) {
+        var response = try await call(message)
+        while response.type == TrezorMessageType.buttonRequest {
+            onButtonRequest?()
+            response = try await call(TrezorMessage(type: TrezorMessageType.buttonAck, payload: Data()))
+        }
+        if response.type == TrezorMessageType.failure {
+            throw try TrezorError.fromFailurePayload(response.payload)
+        }
+        return response
+    }
+
+    private func call(_ message: TrezorMessage) async throws -> (type: UInt16, payload: Data) {
         for report in TrezorProtocolV1.encode(messageType: message.type, payload: message.payload) {
             try await link.write(report)
         }
@@ -29,9 +57,6 @@ public final class TrezorV1Transport: TrezorTransport {
         while true {
             let report = try await link.read()
             if let (type, payload) = try decoder.push(report) {
-                if type == TrezorMessageType.failure {
-                    throw try TrezorError.fromFailurePayload(payload)
-                }
                 return (type, payload)
             }
         }

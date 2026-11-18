@@ -10,9 +10,14 @@ actor MockPacketLink: HardwarePacketLink {
     private(set) var opened = false
     private(set) var closed = false
 
-    /// - Parameter inbound: HID reports the device would send back, delivered one per `read()`.
-    init(inbound: [Data]) {
-        self.inbound = inbound
+    /// - Parameters:
+    ///   - inbound: HID reports the device would send back, delivered one per `read()`.
+    ///   - answersInitialize: Prepend the `Features` reply to the `Initialize` that
+    ///     ``TrezorV1Transport/open()`` sends. Turn off for raw exchanges and THP links.
+    init(inbound: [Data], answersInitialize: Bool = true) {
+        self.inbound = (answersInitialize
+            ? TrezorProtocolV1.encode(messageType: TrezorMessageType.features, payload: Data())
+            : []) + inbound
     }
 
     func open() async throws { opened = true }

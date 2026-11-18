@@ -14,6 +14,7 @@ public enum TrezorTHP {
     public enum Control {
         public static let channelAllocationRequest: UInt8 = 0x40
         public static let channelAllocationResponse: UInt8 = 0x41
+        public static let transportError: UInt8 = 0x42
         public static let ack: UInt8 = 0x20                     // 0010_X000; sequence bit = bit 3
         public static let handshakeInitRequest: UInt8 = 0x00    // 000_XX_000
         public static let handshakeInitResponse: UInt8 = 0x01

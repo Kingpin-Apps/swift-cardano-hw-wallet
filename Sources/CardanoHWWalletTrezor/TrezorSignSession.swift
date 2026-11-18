@@ -14,9 +14,15 @@ public actor TrezorSignSession: HardwareSigner {
     private let network: TrezorNetwork
     private let options: TrezorSigningOptions
 
-    /// Run over a raw packet link with legacy Codec-v1 framing (pre-THP firmware).
-    public init(link: HardwarePacketLink, network: TrezorNetwork, options: TrezorSigningOptions = .init()) {
-        self.transport = TrezorV1Transport(link: link)
+    /// Run over a raw packet link with legacy Codec-v1 framing (pre-THP firmware). `onButtonRequest`
+    /// is called whenever the device waits for the user to confirm on its screen.
+    public init(
+        link: HardwarePacketLink,
+        network: TrezorNetwork,
+        options: TrezorSigningOptions = .init(),
+        onButtonRequest: (@Sendable () -> Void)? = nil
+    ) {
+        self.transport = TrezorV1Transport(link: link, onButtonRequest: onButtonRequest)
         self.network = network
         self.options = options
     }

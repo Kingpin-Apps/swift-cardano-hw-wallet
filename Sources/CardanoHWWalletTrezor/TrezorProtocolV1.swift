@@ -100,4 +100,11 @@ public enum TrezorError: Error, Sendable, Equatable {
     case transport(String)
     /// An unexpected message type where a specific one was required.
     case unexpectedMessage(type: UInt16)
+    /// The THP device isn't paired with this host and no pairing handler was given.
+    case pairingRequired
+    /// THP pairing failed (wrong code, mismatched secret, unsupported method).
+    case pairingFailed(String)
+    /// A THP transport error from the device (1 busy, 2 unallocated channel, 3 decryption failed,
+    /// 5 device locked).
+    case thpTransportError(code: UInt8)
 }

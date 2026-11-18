@@ -134,7 +134,8 @@ struct TrezorProtocolTests {
         // The session wrote the expected framed messages, opening the link first.
         #expect(await link.opened)
         let written = await link.recordedReports()
-        // Decode the outbound reports back into messages: Init + input + output + witnessReq + 2×hostAck.
+        // Decode the outbound reports back into messages: Initialize + Init + input + output +
+        // witnessReq + 2×hostAck.
         var decoder = TrezorProtocolV1.Decoder()
         var outboundTypes: [UInt16] = []
         for report in written {
@@ -143,7 +144,7 @@ struct TrezorProtocolTests {
                 decoder = TrezorProtocolV1.Decoder()
             }
         }
-        #expect(outboundTypes == [320, 321, 322, 315, 317, 317])
+        #expect(outboundTypes == [0, 320, 321, 322, 315, 317, 317])
     }
 
     @Test("A device Failure is surfaced as a TrezorError")

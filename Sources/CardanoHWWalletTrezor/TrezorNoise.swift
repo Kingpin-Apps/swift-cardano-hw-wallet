@@ -81,7 +81,7 @@ public final class NoiseXXHandshake {
 
     private let role: Role
     private var sym: NoiseSymmetricState
-    private let s: Curve25519.KeyAgreement.PrivateKey     // local static
+    private var s: Curve25519.KeyAgreement.PrivateKey     // local static
     private var e: Curve25519.KeyAgreement.PrivateKey?    // local ephemeral
     private var rs: Data?                                 // remote static pubkey
     private var re: Data?                                 // remote ephemeral pubkey
@@ -95,6 +95,16 @@ public final class NoiseXXHandshake {
 
     /// The remote static public key learned during the handshake (Trezor's masked static key).
     public var remoteStaticKey: Data? { rs }
+
+    /// The running transcript hash. After message 3 it is THP's `handshake_hash`, which binds the
+    /// pairing code to this channel.
+    public var handshakeHash: Data { sym.h }
+
+    /// Replace the local static key before message 3. THP lets the host pick its static key after
+    /// reading message 2, so it can reuse the key tied to a stored pairing credential.
+    public func setLocalStatic(_ key: Curve25519.KeyAgreement.PrivateKey) {
+        s = key
+    }
 
     /// The remote ephemeral public key learned during the handshake.
     public var remoteEphemeralKey: Data? { re }
@@ -177,7 +187,8 @@ public final class NoiseXXHandshake {
 
 /// Low-level Noise crypto primitives over SwiftCrypto.
 enum NoiseCrypto {
-    /// AES-GCM encrypt with the Noise nonce (4 zero bytes ‖ 8-byte little-endian counter). Returns
+    /// AES-GCM encrypt with the Noise nonce (4 zero bytes ‖ 8-byte **big-endian** counter, as Noise
+    /// and THP's `IV = 0^95 ‖ 1` require). Returns
     /// `ciphertext ‖ 16-byte tag`.
     static func aesEncrypt(key: SymmetricKey, counter: UInt64, ad: Data, plaintext: Data) throws -> Data {
         let sealed = try AES.GCM.seal(plaintext, using: key, nonce: try AES.GCM.Nonce(data: nonce(counter)), authenticating: ad)
@@ -213,8 +224,8 @@ enum NoiseCrypto {
 
     private static func nonce(_ counter: UInt64) -> Data {
         var iv = Data([0, 0, 0, 0])
-        var le = counter.littleEndian
-        withUnsafeBytes(of: &le) { iv.append(contentsOf: $0) }
+        var be = counter.bigEndian
+        withUnsafeBytes(of: &be) { iv.append(contentsOf: $0) }
         return iv
     }
 }

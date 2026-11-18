@@ -100,6 +100,23 @@ struct ProtobufReader {
     }
 
     func varint(_ field: Int) -> UInt64? { fields.first { $0.number == field }?.varint }
+    /// Every value of a repeated varint field, packed or unpacked.
+    func repeatedVarint(_ field: Int) -> [UInt64] {
+        var values: [UInt64] = []
+        for f in fields where f.number == field {
+            if f.wire == ProtobufWire.varint {
+                values.append(f.varint)
+            } else if f.wire == ProtobufWire.lengthDelimited {
+                var shift: UInt64 = 0
+                var current: UInt64 = 0
+                for byte in f.bytes {
+                    current |= UInt64(byte & 0x7f) << shift
+                    if byte & 0x80 == 0 { values.append(current); current = 0; shift = 0 } else { shift += 7; if shift > 63 { break } }
+                }
+            }
+        }
+        return values
+    }
     func bytes(_ field: Int) -> Data? { fields.first { $0.number == field && $0.wire == ProtobufWire.lengthDelimited }?.bytes }
     func string(_ field: Int) -> String? { bytes(field).flatMap { String(data: $0, encoding: .utf8) } }
 }

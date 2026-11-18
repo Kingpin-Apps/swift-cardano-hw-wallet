@@ -4,7 +4,27 @@ import CardanoHWKit
 
 /// Trezor wire message-type ids (`messages.proto` `MessageType_*`), used in the v1 framing header.
 public enum TrezorMessageType {
+    public static let initialize: UInt16 = 0
+    public static let success: UInt16 = 2
     public static let failure: UInt16 = 3
+    public static let features: UInt16 = 17
+    public static let buttonRequest: UInt16 = 26
+    public static let buttonAck: UInt16 = 27
+    // THP (messages-thp.proto)
+    public static let thpCreateNewSession: UInt16 = 1000
+    public static let thpPairingRequest: UInt16 = 1008
+    public static let thpPairingRequestApproved: UInt16 = 1009
+    public static let thpSelectMethod: UInt16 = 1010
+    public static let thpPairingPreparationsFinished: UInt16 = 1011
+    public static let thpCredentialRequest: UInt16 = 1016
+    public static let thpCredentialResponse: UInt16 = 1017
+    public static let thpEndRequest: UInt16 = 1018
+    public static let thpEndResponse: UInt16 = 1019
+    public static let thpCodeEntryCommitment: UInt16 = 1024
+    public static let thpCodeEntryChallenge: UInt16 = 1025
+    public static let thpCodeEntryCpaceTrezor: UInt16 = 1026
+    public static let thpCodeEntryCpaceHostTag: UInt16 = 1027
+    public static let thpCodeEntrySecret: UInt16 = 1028
     public static let cardanoGetPublicKey: UInt16 = 305
     public static let cardanoPublicKey: UInt16 = 306
     public static let cardanoGetAddress: UInt16 = 307

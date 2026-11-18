@@ -16,7 +16,7 @@ struct TrezorSecurityRegressionTests {
         var f = ProtobufWriter()
         f.varint(1, UInt64.max)
         f.string(2, "x")
-        let link = MockPacketLink(inbound: TrezorProtocolV1.encode(messageType: TrezorMessageType.failure, payload: f.data))
+        let link = MockPacketLink(inbound: TrezorProtocolV1.encode(messageType: TrezorMessageType.failure, payload: f.data), answersInitialize: false)
         do {
             _ = try await TrezorV1Transport(link: link).exchange(TrezorCardanoSerializer.hostAckMessage())
             Issue.record("expected a thrown failure")
@@ -53,7 +53,7 @@ struct TrezorSecurityRegressionTests {
 
     @Test("TrezorTHPSession.open() throws on a length-2 packet from the device")
     func thpSessionShortLength() async {
-        let link = MockPacketLink(inbound: [Data([0x40, 0xff, 0xff, 0x00, 0x02]) + Data(repeating: 0, count: 59)])
+        let link = MockPacketLink(inbound: [Data([0x40, 0xff, 0xff, 0x00, 0x02]) + Data(repeating: 0, count: 59)], answersInitialize: false)
         let session = TrezorTHPSession(link: link)
         await #expect(throws: TrezorError.self) { try await session.open() }
     }
@@ -94,17 +94,17 @@ struct TrezorSecurityRegressionTests {
         try await deviceRun
     }
 
-    @Test("Without a verifier the session reports the device as unauthenticated")
+    @Test("Without a verifier, pairing or credential the session reports the device as unauthenticated")
     func thpDefaultUnauthenticated() async throws {
         let hostToDevice = PacketPipe()
         let deviceToHost = PacketPipe()
         let hostLink = PairedPacketLink(inbound: deviceToHost, outbound: hostToDevice)
         let deviceLink = PairedPacketLink(inbound: hostToDevice, outbound: deviceToHost)
-        async let deviceRun: Void = THPDeviceResponder(link: deviceLink).run(channel: 0x0007)
+        async let deviceRun: Void = THPDeviceResponder(link: deviceLink, completionState: 0x01).run(channel: 0x0007)
         let session = TrezorTHPSession(link: hostLink)
         try await session.open()
         #expect(await session.deviceAuthenticated == false)
-        #expect(await session.handshakeState == 0x00)
+        #expect(await session.handshakeState == 0x01)
         _ = try await session.exchange(TrezorMessage(type: 313, payload: Data([0x01])))
         try await deviceRun
     }
@@ -139,6 +139,35 @@ struct TrezorSecurityRegressionTests {
         #expect(params.varint(1) == 0)          // BASE
     }
 
+    @Test("Codec v1 sends Initialize { derive_cardano } and answers ButtonRequests")
+    func v1InitializeAndButtons() async throws {
+        var reply = ProtobufWriter()
+        reply.string(1, "addr_test1same")
+        let inbound = TrezorProtocolV1.encode(messageType: TrezorMessageType.buttonRequest, payload: Data())
+            + TrezorProtocolV1.encode(messageType: TrezorMessageType.cardanoAddress, payload: reply.data)
+        let link = MockPacketLink(inbound: inbound)
+        let presses = PressCounter()
+        let session = TrezorSignSession(link: link, network: .preprod, onButtonRequest: { presses.increment() })
+        let account = HardwareAccountModel(
+            deviceKind: .trezor, accountXPub: Data(repeating: 1, count: 64),
+            masterFingerprint: Data(repeating: 0, count: 4), accountPath: "m/1852'/1815'/0'", network: .testnet
+        )
+        try await session.verifyAddress("addr_test1same", account: account)
+        #expect(presses.count == 1)
+
+        // Outbound: Initialize { derive_cardano = true }, CardanoGetAddress, ButtonAck.
+        var decoder = TrezorProtocolV1.Decoder()
+        var messages: [(UInt16, Data)] = []
+        for report in await link.recordedReports() {
+            if let message = try decoder.push(report) {
+                messages.append(message)
+                decoder = TrezorProtocolV1.Decoder()
+            }
+        }
+        #expect(messages.map(\.0) == [TrezorMessageType.initialize, TrezorMessageType.cardanoGetAddress, TrezorMessageType.buttonAck])
+        #expect(try ProtobufReader(messages[0].1).varint(3) == 1)
+    }
+
     @Test("verifyAddress throws addressMismatch when the device derives another address")
     func verifyAddressMismatch() async throws {
         var reply = ProtobufWriter()
@@ -153,4 +182,11 @@ struct TrezorSecurityRegressionTests {
             try await session.verifyAddress("addr_test1expected", account: account, role: 0, index: 0, stakeIndex: 0)
         }
     }
+}
+
+final class PressCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+    var count: Int { lock.withLock { value } }
+    func increment() { lock.withLock { value += 1 } }
 }

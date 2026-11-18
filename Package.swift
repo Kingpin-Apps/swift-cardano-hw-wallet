@@ -99,6 +99,8 @@ let package = Package(
                 "CardanoHWKit",
                 // Noise XX handshake crypto for THP (v2).
                 .product(name: "Crypto", package: "swift-crypto"),
+                // Field arithmetic for THP pairing's Elligator2 map.
+                .product(name: "BigInt", package: "BigInt"),
             ]
         ),
         .testTarget(
