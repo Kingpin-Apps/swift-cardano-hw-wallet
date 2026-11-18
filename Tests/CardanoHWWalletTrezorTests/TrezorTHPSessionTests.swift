@@ -260,7 +260,9 @@ actor THPDeviceResponder {
         let hostTag = try ProtobufReader(payload)
         let hostPublic = try #require(hostTag.bytes(1))
         let shared = try TrezorTHPPairing.x25519(cpacePrivate, Data(hostPublic))
-        guard hostTag.bytes(2).map(Data.init) == Data(SHA256.hash(data: shared)) else {
+        let expectedTag = Data(SHA256.hash(data: shared))
+        let receivedTag: Data? = hostTag.bytes(2).map { Data($0) }
+        guard receivedTag == expectedTag else {
             var f = ProtobufWriter(); f.varint(1, 99); f.string(2, "Unexpected tag")
             try await sendApp(0, TrezorMessageType.failure, f.data)
             throw TrezorError.pairingFailed("device: wrong tag")
