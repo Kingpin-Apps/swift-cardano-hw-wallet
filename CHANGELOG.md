@@ -1,3 +1,10 @@
+## 0.4.0 (2026-11-18)
+
+### Feat
+
+- **trezor**: THP code-entry pairing, credentials and sessions
+- **ledger**: Sendable scan results for device pickers
+
 ## 0.3.2 (2026-11-18)
 
 ### Fix
