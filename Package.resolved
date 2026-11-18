@@ -1,5 +1,5 @@
 {
-  "originHash" : "e01550dc0efbe96014e4b29cb04ff31bbfe7ec606e8a94284f16758e3e7c3930",
+  "originHash" : "5e4c0f9c2bfa184da93b61992bdf1e5f3f8563a5f4699d71025c6e5b892c3951",
   "pins" : [
     {
       "identity" : "base32",
@@ -186,8 +186,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Kingpin-Apps/swift-cardano-chain.git",
       "state" : {
-        "revision" : "1c3e0b53404f504a3849ede96a8d85ba24974937",
-        "version" : "0.17.0"
+        "revision" : "6f08e65d3977c5e08f9b7c83adfaa3fa46ae716a",
+        "version" : "0.17.1"
       }
     },
     {
@@ -231,8 +231,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Kingpin-Apps/swift-cardano-uplc.git",
       "state" : {
-        "revision" : "85c58ccc5a9998548a5690252f5abd0aa311e9b0",
-        "version" : "0.8.3"
+        "revision" : "935e0397b9626dd1957b178dd77e93c1292a9d4c",
+        "version" : "0.8.4"
       }
     },
     {
@@ -528,8 +528,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/21-DOT-DEV/swift-secp256k1",
       "state" : {
-        "revision" : "bcd6dd8e615ce243eab7097f213c8c4b39305a2e",
-        "version" : "0.24.0"
+        "revision" : "ba04e9db3567bf345af7334b8e9be5727a73cc42",
+        "version" : "0.25.1"
       }
     },
     {

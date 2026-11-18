@@ -25,7 +25,7 @@ let package = Package(
         // Pinned to the same lines the swift-cardano-* stack resolves, so a single version of each package resolves
         // across the whole app graph.
         .package(url: "https://github.com/Kingpin-Apps/swift-cardano-core.git", from: "0.11.0"),
-        .package(url: "https://github.com/Kingpin-Apps/swift-cardano-chain.git", from: "0.17.0"),
+        .package(url: "https://github.com/Kingpin-Apps/swift-cardano-chain.git", from: "0.17.1"),
         .package(url: "https://github.com/Kingpin-Apps/swift-cardano-txbuilder.git", from: "2.0.6"),
         .package(url: "https://github.com/attaswift/BigInt.git", "5.7.0"..<"7.0.0"),
         // Keystone's official iOS SDK: Cardano UR sign-request / signature types + URKit + the
